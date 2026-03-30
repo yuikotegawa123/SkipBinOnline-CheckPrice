@@ -2,8 +2,6 @@
 import threading
 import queue
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import tkinter as tk
-from tkinter import ttk
 
 # Selenium is imported lazily inside make_driver() so that importing this
 # module does not block the UI on startup.
@@ -292,6 +290,8 @@ def run_search(postcode, dod, pud, cell_q, status_q, done_event):
 # ---------------------------------------------------------------------------
 
 def build_ui():
+    import tkinter as tk
+    from tkinter import ttk
     root = tk.Tk()
     root.title("SkipBin Price Checker - BookABin")
     root.resizable(True, True)
