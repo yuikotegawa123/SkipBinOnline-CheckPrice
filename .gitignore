@@ -1,0 +1,17 @@
+# Build outputs
+dist/
+build/
+*.spec.bak
+__pycache__/
+*.pyc
+
+# Bundled Chrome (large, no need to push to GitHub)
+chrome-win64/
+chromedriver-win64/
+
+# Logs
+*.log
+
+# Python env
+.venv/
+venv/

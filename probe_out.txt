@@ -1,0 +1,32 @@
+Step3 patterns found: 27
+  lvBin
+  lvBin
+  cubic metre
+  lvBin
+  lvBin
+  cubic metre
+  lvBin
+  lvBin
+  cubic metre
+  lvBin
+  lvBin
+  cubic metre
+  lvBin
+  lvBin
+  cubic metre
+  lvBin
+  lvBin
+  cubic metre
+  lvBin
+  lvBin
+
+All <a> tags with href non-empty:
+  javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions("ctl00$ctl00$ContentBody$ContentMain$lvBinSizes$ctr
+  javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions("ctl00$ctl00$ContentBody$ContentMain$lvBinSizes$ctr
+  javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions("ctl00$ctl00$ContentBody$ContentMain$lvBinSizes$ctr
+  javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions("ctl00$ctl00$ContentBody$ContentMain$lvBinSizes$ctr
+  javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions("ctl00$ctl00$ContentBody$ContentMain$lvBinSizes$ctr
+  javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions("ctl00$ctl00$ContentBody$ContentMain$lvBinSizes$ctr
+  javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions("ctl00$ctl00$ContentBody$ContentMain$lvBinSizes$ctr
+  javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions("ctl00$ctl00$ContentBody$ContentMain$lvBinSizes$ctr
+  javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions("ctl00$ctl00$ContentBody$ContentMain$lvBinSizes$ctr
