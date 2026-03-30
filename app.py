@@ -21,8 +21,11 @@ import Skipbinsonline as SBO
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _collect(run_fn, *args):
-    """Run a scraper's run_search and collect all (wt, size, price) results."""
+def _collect(run_fn, *args, status_placeholder=None):
+    """
+    Run a scraper's run_search and collect all (wt, size, price) results.
+    If status_placeholder is given, updates it with latest status messages.
+    """
     cell_q   = queue.Queue()
     status_q = queue.Queue()
     done     = threading.Event()
@@ -32,7 +35,17 @@ def _collect(run_fn, *args):
         daemon=True,
     )
     t.start()
-    done.wait()
+    while not done.wait(timeout=0.5):
+        # Drain status queue and show latest message
+        msg = None
+        while not status_q.empty():
+            msg = status_q.get_nowait()
+        if msg and status_placeholder:
+            status_placeholder.caption(f"⏳ {msg}")
+    # Drain any remaining status messages
+    msg = None
+    while not status_q.empty():
+        msg = status_q.get_nowait()
     results = {}
     while not cell_q.empty():
         wt, size, price = cell_q.get_nowait()
@@ -107,47 +120,77 @@ if search:
     bpsb_dod = _parse_bpsb_date(dod)
     bpsb_pud = _parse_bpsb_date(pud)
 
-    status = st.empty()
-    prog   = st.progress(0, text="Starting scrapers …")
-
     results_store = {}
 
-    def run_bab():
-        results_store["bab"] = _collect(Bookabin.run_search, postcode, dod, pud)
+    # One status block per scraper
+    st.markdown("### ⏳ Searching …")
+    c1, c2, c3, c4 = st.columns(4)
 
-    def run_bpsb():
-        results_store["bpsb"] = _collect(BPSB.run_search, postcode, bpsb_dod, bpsb_pud)
+    with c1:
+        st.markdown("**📦 BookABin**")
+        bab_st  = st.empty()
+        bab_st.info("Starting …")
+    with c2:
+        st.markdown("**💰 BestPriceSkipBins**")
+        bpsb_st = st.empty()
+        bpsb_st.info("Starting …")
+    with c3:
+        st.markdown("**🔍 SkipBinFinder**")
+        sbf_st  = st.empty()
+        sbf_st.info("Starting …")
+    with c4:
+        st.markdown("**🌐 SkipBinsOnline**")
+        sbo_st  = st.empty()
+        sbo_st.info("Starting …")
 
-    def run_sbf():
-        results_store["sbf"] = _collect(SBF.run_search, postcode, dod, pud)
-
-    def run_sbo():
-        results_store["sbo"] = _collect(SBO.run_search, postcode, dod, pud)
-
-    scrapers = [
-        ("BookABin",          run_bab),
-        ("BestPriceSkipBins", run_bpsb),
-        ("SkipBinFinder",     run_sbf),
-        ("SkipBinsOnline",    run_sbo),
-    ]
+    prog = st.progress(0)
 
     done_count = [0]
     lock = threading.Lock()
 
-    def run_with_progress(name, fn):
-        fn()
+    def run_bab():
+        bab_st.info("🔄 Running headless Chrome …")
+        results_store["bab"] = _collect(Bookabin.run_search, postcode, dod, pud,
+                                        status_placeholder=bab_st)
+        bab_st.success("✅ Done")
         with lock:
             done_count[0] += 1
-            prog.progress(done_count[0] / len(scrapers),
-                          text=f"{name} done ✓  ({done_count[0]}/{len(scrapers)})")
+            prog.progress(done_count[0] / 4)
+
+    def run_bpsb():
+        bpsb_st.info("🔄 Fetching prices …")
+        results_store["bpsb"] = _collect(BPSB.run_search, postcode, bpsb_dod, bpsb_pud,
+                                         status_placeholder=bpsb_st)
+        bpsb_st.success("✅ Done")
+        with lock:
+            done_count[0] += 1
+            prog.progress(done_count[0] / 4)
+
+    def run_sbf():
+        sbf_st.info("🔄 Running headless Chrome …")
+        results_store["sbf"] = _collect(SBF.run_search, postcode, dod, pud,
+                                        status_placeholder=sbf_st)
+        sbf_st.success("✅ Done")
+        with lock:
+            done_count[0] += 1
+            prog.progress(done_count[0] / 4)
+
+    def run_sbo():
+        sbo_st.info("🔄 Fetching prices …")
+        results_store["sbo"] = _collect(SBO.run_search, postcode, dod, pud,
+                                        status_placeholder=sbo_st)
+        sbo_st.success("✅ Done")
+        with lock:
+            done_count[0] += 1
+            prog.progress(done_count[0] / 4)
 
     with ThreadPoolExecutor(max_workers=4) as ex:
-        futures = [ex.submit(run_with_progress, name, fn) for name, fn in scrapers]
+        futures = [ex.submit(fn) for fn in [run_bab, run_bpsb, run_sbf, run_sbo]]
         for f in futures:
             f.result()
 
-    prog.empty()
-    status.success(f"Done — Postcode {postcode}  |  {dod} → {pud}  |  All four sources complete.")
+    prog.progress(1.0)
+    st.success(f"✅ Done — Postcode {postcode}  |  {dod} → {pud}  |  All four sources complete.")
 
     # ── Display results ──────────────────────────────────────────────────────
     tab_bab, tab_bpsb, tab_sbf, tab_sbo = st.tabs([
