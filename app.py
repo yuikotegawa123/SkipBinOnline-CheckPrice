@@ -7,7 +7,7 @@ Runs all four scrapers concurrently then displays results in tabs.
 
 import queue
 import threading
-from concurrent.futures import ThreadPoolExecutor
+import time
 
 import pandas as pd
 import streamlit as st
@@ -21,11 +21,8 @@ import Skipbinsonline as SBO
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _collect(run_fn, *args, status_placeholder=None):
-    """
-    Run a scraper's run_search and collect all (wt, size, price) results.
-    If status_placeholder is given, updates it with latest status messages.
-    """
+def _collect(run_fn, *args):
+    """Run a scraper's run_search and collect all (wt, size, price) results."""
     cell_q   = queue.Queue()
     status_q = queue.Queue()
     done     = threading.Event()
@@ -35,17 +32,7 @@ def _collect(run_fn, *args, status_placeholder=None):
         daemon=True,
     )
     t.start()
-    while not done.wait(timeout=0.5):
-        # Drain status queue and show latest message
-        msg = None
-        while not status_q.empty():
-            msg = status_q.get_nowait()
-        if msg and status_placeholder:
-            status_placeholder.caption(f"⏳ {msg}")
-    # Drain any remaining status messages
-    msg = None
-    while not status_q.empty():
-        msg = status_q.get_nowait()
+    done.wait()
     results = {}
     while not cell_q.empty():
         wt, size, price = cell_q.get_nowait()
@@ -121,75 +108,63 @@ if search:
     bpsb_pud = _parse_bpsb_date(pud)
 
     results_store = {}
-
-    # One status block per scraper
-    st.markdown("### ⏳ Searching …")
-    c1, c2, c3, c4 = st.columns(4)
-
-    with c1:
-        st.markdown("**📦 BookABin**")
-        bab_st  = st.empty()
-        bab_st.info("Starting …")
-    with c2:
-        st.markdown("**💰 BestPriceSkipBins**")
-        bpsb_st = st.empty()
-        bpsb_st.info("Starting …")
-    with c3:
-        st.markdown("**🔍 SkipBinFinder**")
-        sbf_st  = st.empty()
-        sbf_st.info("Starting …")
-    with c4:
-        st.markdown("**🌐 SkipBinsOnline**")
-        sbo_st  = st.empty()
-        sbo_st.info("Starting …")
-
-    prog = st.progress(0)
-
-    done_count = [0]
+    status_store  = {}   # latest status string per scraper (written by threads, read by main)
     lock = threading.Lock()
 
-    def run_bab():
-        bab_st.info("🔄 Running headless Chrome …")
-        results_store["bab"] = _collect(Bookabin.run_search, postcode, dod, pud,
-                                        status_placeholder=bab_st)
-        bab_st.success("✅ Done")
+    def _run(key, run_fn, *args):
+        cell_q   = queue.Queue()
+        status_q = queue.Queue()
+        done     = threading.Event()
+        threading.Thread(target=run_fn, args=(*args, cell_q, status_q, done), daemon=True).start()
+        done.wait()
+        out = {}
+        while not cell_q.empty():
+            wt, size, price = cell_q.get_nowait()
+            out.setdefault(wt, {})[size] = price
         with lock:
-            done_count[0] += 1
-            prog.progress(done_count[0] / 4)
+            results_store[key] = out
+            status_store[key]  = "done"
 
-    def run_bpsb():
-        bpsb_st.info("🔄 Fetching prices …")
-        results_store["bpsb"] = _collect(BPSB.run_search, postcode, bpsb_dod, bpsb_pud,
-                                         status_placeholder=bpsb_st)
-        bpsb_st.success("✅ Done")
-        with lock:
-            done_count[0] += 1
-            prog.progress(done_count[0] / 4)
+    threads = [
+        threading.Thread(target=_run, args=("bab",  Bookabin.run_search, postcode, dod, pud),           daemon=True),
+        threading.Thread(target=_run, args=("bpsb", BPSB.run_search,     postcode, bpsb_dod, bpsb_pud), daemon=True),
+        threading.Thread(target=_run, args=("sbf",  SBF.run_search,      postcode, dod, pud),           daemon=True),
+        threading.Thread(target=_run, args=("sbo",  SBO.run_search,      postcode, dod, pud),           daemon=True),
+    ]
+    for t in threads:
+        t.start()
 
-    def run_sbf():
-        sbf_st.info("🔄 Running headless Chrome …")
-        results_store["sbf"] = _collect(SBF.run_search, postcode, dod, pud,
-                                        status_placeholder=sbf_st)
-        sbf_st.success("✅ Done")
-        with lock:
-            done_count[0] += 1
-            prog.progress(done_count[0] / 4)
+    labels = {
+        "bab":  "📦 BookABin",
+        "bpsb": "💰 BestPriceSkipBins",
+        "sbf":  "🔍 SkipBinFinder",
+        "sbo":  "🌐 SkipBinsOnline",
+    }
+    keys = ["bab", "bpsb", "sbf", "sbo"]
 
-    def run_sbo():
-        sbo_st.info("🔄 Fetching prices …")
-        results_store["sbo"] = _collect(SBO.run_search, postcode, dod, pud,
-                                        status_placeholder=sbo_st)
-        sbo_st.success("✅ Done")
-        with lock:
-            done_count[0] += 1
-            prog.progress(done_count[0] / 4)
+    prog = st.progress(0, text="Searching …")
+    cols = st.columns(4)
+    placeholders = {k: cols[i].empty() for i, k in enumerate(keys)}
+    for k, ph in placeholders.items():
+        ph.info(f"{labels[k]}\n\n⏳ Running …")
 
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        futures = [ex.submit(fn) for fn in [run_bab, run_bpsb, run_sbf, run_sbo]]
-        for f in futures:
-            f.result()
+    # Poll on main thread until all done
+    while any(t.is_alive() for t in threads):
+        n_done = sum(1 for k in keys if status_store.get(k) == "done")
+        prog.progress(n_done / 4, text=f"Completed {n_done} / 4 sources …")
+        for k, ph in placeholders.items():
+            if status_store.get(k) == "done":
+                ph.success(f"{labels[k]}\n\n✅ Done")
+        time.sleep(1)
 
-    prog.progress(1.0)
+    # Final update
+    for k, ph in placeholders.items():
+        if status_store.get(k) == "done":
+            ph.success(f"{labels[k]}\n\n✅ Done")
+        else:
+            ph.error(f"{labels[k]}\n\n❌ Failed")
+    prog.progress(1.0, text="All done!")
+
     st.success(f"✅ Done — Postcode {postcode}  |  {dod} → {pud}  |  All four sources complete.")
 
     # ── Display results ──────────────────────────────────────────────────────
