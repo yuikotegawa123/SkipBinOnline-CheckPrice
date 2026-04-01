@@ -543,7 +543,7 @@ elif page == "BookABin":
                                 st.caption("No changes made yet.")
                         with _up_col2:
                             _submit_rates_btn = st.button(
-                                "💾 Update Rates",
+                                "💾 Update Price",
                                 use_container_width=True,
                                 type="primary",
                                 key="bab_submit_rates",
@@ -552,14 +552,13 @@ elif page == "BookABin":
 
                         if _submit_rates_btn and _edit_updates:
                             _sel = _accounts[st.session_state.get("bab_rates_acc_idx", 0)]
-                            _up_status_q = queue.Queue()
                             _up_done = threading.Event()
                             _up_result = {}
 
                             def _do_update():
                                 r = Bookabin.update_rates(
                                     _sel["supplier_id"], _sel["password"],
-                                    saved_dod, _edit_updates, _up_status_q,
+                                    saved_dod, _edit_updates,
                                 )
                                 _up_result.update(r)
                                 _up_done.set()
@@ -567,11 +566,8 @@ elif page == "BookABin":
                             _up_thread = threading.Thread(target=_do_update, daemon=True)
                             _up_thread.start()
 
-                            _up_ph = st.empty()
-                            while not _up_done.is_set():
-                                while not _up_status_q.empty():
-                                    _up_ph.info(_up_status_q.get_nowait())
-                                time.sleep(0.5)
+                            with st.spinner("Updating prices on BookABin…"):
+                                _up_done.wait()
 
                             if _up_result.get("ok"):
                                 st.success(_up_result["message"])
