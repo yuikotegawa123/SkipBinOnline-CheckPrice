@@ -94,11 +94,13 @@ with st.sidebar:
             st.error("Please enter your Supplier ID and password.")
         else:
             with st.spinner("Signing in to BookABin…"):
-                ok, msg = Bookabin.login(bab_account, bab_password)
+                ok, msg, screenshot = Bookabin.login(bab_account, bab_password)
             if ok:
                 st.success(msg)
             else:
                 st.error(msg)
+            if screenshot:
+                st.image(screenshot, caption="Page after login attempt", use_container_width=True)
 
 # ---------------------------------------------------------------------------
 # Inputs

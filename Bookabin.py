@@ -107,14 +107,16 @@ def make_driver(retries=3):
 def login(username: str, password: str):
     """
     Log into https://www.bookabin.com.au/suppliers.aspx.
-    Returns (success: bool, message: str).
+    Returns (success: bool, message: str, screenshot: bytes | None).
     """
     import time
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
 
+    # Use a larger window so the screenshot is readable
     driver = make_driver()
+    driver.set_window_size(1280, 900)
     try:
         driver.get("https://www.bookabin.com.au/suppliers.aspx")
         wait = WebDriverWait(driver, 15)
@@ -138,7 +140,8 @@ def login(username: str, password: str):
             user_input = inputs[-1] if inputs else None
 
         if user_input is None:
-            return False, "Could not find the Supplier ID input field on the page."
+            shot = driver.get_screenshot_as_png()
+            return False, "Could not find the Supplier ID input field on the page.", shot
 
         user_input.clear()
         user_input.send_keys(username)
@@ -155,18 +158,24 @@ def login(username: str, password: str):
 
         time.sleep(3)
 
+        shot = driver.get_screenshot_as_png()
         src = driver.page_source.lower()
+
         # Success indicators: the page shows logout / welcome / supplier dashboard
         if any(k in src for k in ("log out", "logout", "sign out", "welcome", "my account")):
-            return True, "Logged in successfully!"
+            return True, "Logged in successfully!", shot
         # Failure indicators
         if any(k in src for k in ("invalid", "incorrect", "error", "failed")):
-            return False, "Login failed: invalid credentials."
-        # Unknown — consider it a successful attempt
-        return True, "Login submitted — please verify the result."
+            return False, "Login failed: invalid credentials.", shot
+        # Unknown — show screenshot so user can judge
+        return True, "Login submitted — see screenshot below.", shot
 
     except Exception as exc:
-        return False, f"Error during login: {exc}"
+        try:
+            shot = driver.get_screenshot_as_png()
+        except Exception:
+            shot = None
+        return False, f"Error during login: {exc}", shot
     finally:
         driver.quit()
 
