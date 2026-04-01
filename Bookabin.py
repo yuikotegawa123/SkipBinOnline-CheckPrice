@@ -638,8 +638,15 @@ def update_rates(supplier_id: str, password: str, from_date: str,
                 target_input.send_keys(str(new_price))
 
                 update_btn = edit_tr.find_element(By.XPATH, _UPDATE_BTN_XPATH)
+                driver.execute_script("arguments[0].scrollIntoView(true);", update_btn)
                 driver.execute_script("arguments[0].click();", update_btn)
-                time.sleep(1.5)
+                # Wait for ASP.NET postback to complete — Edit Row buttons reappear
+                try:
+                    WebDriverWait(driver, 10).until(
+                        lambda d: len(_get_data_rows(d)) > 0
+                    )
+                except Exception:
+                    time.sleep(2)
                 updated_count += 1
 
             except Exception as row_exc:
@@ -888,8 +895,15 @@ def auto_update_rates(supplier_id: str, password: str, from_date: str,
 
                 # Click Update Row to save this row on the website
                 update_btn = edit_tr.find_element(By.XPATH, _UPDATE_BTN_XPATH)
+                driver.execute_script("arguments[0].scrollIntoView(true);", update_btn)
                 driver.execute_script("arguments[0].click();", update_btn)
-                time.sleep(1.5)
+                # Wait for ASP.NET postback to complete — Edit Row buttons reappear
+                try:
+                    WebDriverWait(driver, 10).until(
+                        lambda d: len(_get_data_rows(d)) > 0
+                    )
+                except Exception:
+                    time.sleep(2)
                 updated_count += 1
 
             except Exception as row_exc:
