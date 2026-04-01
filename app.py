@@ -3,6 +3,8 @@ app.py  –  Streamlit web UI for SkipBin Price Checker
 Deploy to Streamlit Community Cloud (free) from GitHub.
 """
 
+import json
+import os
 import queue
 import threading
 import time
@@ -50,6 +52,28 @@ def _parse_bpsb_date(d_slash: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Disk cache helpers  (survive F5 / page refresh)
+# ---------------------------------------------------------------------------
+
+_CACHE_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
+_BAB_CACHE  = os.path.join(_CACHE_DIR, "bab_results.json")
+
+def _save_cache(path: str, data: dict) -> None:
+    """Persist arbitrary dict to a JSON file."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+def _load_cache(path: str) -> dict | None:
+    """Load dict from JSON file; return None if missing or corrupt."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
 
@@ -65,6 +89,15 @@ st.set_page_config(
 
 if "page" not in st.session_state:
     st.session_state.page = "Home"
+
+# Restore disk-cached results into session_state on first run (survives F5)
+if "bab_results" not in st.session_state:
+    _cached = _load_cache(_BAB_CACHE)
+    if _cached:
+        st.session_state["bab_results"]    = _cached.get("results", {})
+        st.session_state["bab_search_pc"]  = _cached.get("pc", "")
+        st.session_state["bab_search_dod"] = _cached.get("dod", "")
+        st.session_state["bab_search_pud"] = _cached.get("pud", "")
 
 def _go_home():
     st.session_state.page = "Home"
@@ -281,11 +314,17 @@ elif page == "BookABin":
                 st.warning("No data returned from BookABin. Check the postcode and dates, then try again.")
                 st.session_state.pop("bab_results", None)
             else:
-                # ── Persist results so they survive tab switches ──
-                st.session_state["bab_results"]  = _fetched
+                # ── Persist results so they survive tab switches AND F5 ──
+                st.session_state["bab_results"]    = _fetched
                 st.session_state["bab_search_pc"]  = bab_postcode
                 st.session_state["bab_search_dod"] = bab_dod
                 st.session_state["bab_search_pud"] = bab_pud
+                _save_cache(_BAB_CACHE, {
+                    "results": _fetched,
+                    "pc":      bab_postcode,
+                    "dod":     bab_dod,
+                    "pud":     bab_pud,
+                })
 
         # ── Render from session_state (persists across tab switches) ──
         if "bab_results" in st.session_state:
