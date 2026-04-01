@@ -55,8 +55,15 @@ def _parse_bpsb_date(d_slash: str) -> str:
 # Disk cache helpers  (survive F5 / page refresh)
 # ---------------------------------------------------------------------------
 
-_CACHE_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
-_BAB_CACHE  = os.path.join(_CACHE_DIR, "bab_results.json")
+_CACHE_DIR     = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
+_BAB_CACHE     = os.path.join(_CACHE_DIR, "bab_results.json")
+_BAB_ACCOUNTS  = os.path.join(_CACHE_DIR, "bab_accounts.json")
+
+_DEFAULT_ACCOUNTS = [
+    {"label": "Account 1", "supplier_id": "", "password": ""},
+    {"label": "Account 2", "supplier_id": "", "password": ""},
+    {"label": "Account 3", "supplier_id": "", "password": ""},
+]
 
 def _save_cache(path: str, data: dict) -> None:
     """Persist arbitrary dict to a JSON file."""
@@ -98,6 +105,15 @@ if "bab_results" not in st.session_state:
         st.session_state["bab_search_pc"]  = _cached.get("pc", "")
         st.session_state["bab_search_dod"] = _cached.get("dod", "")
         st.session_state["bab_search_pud"] = _cached.get("pud", "")
+
+# Restore saved accounts (survives F5)
+if "bab_accounts" not in st.session_state:
+    _acc = _load_cache(_BAB_ACCOUNTS)
+    st.session_state["bab_accounts"] = _acc if isinstance(_acc, list) else list(_DEFAULT_ACCOUNTS)
+
+# Per-account unlock flags (which account is currently in edit mode)
+if "bab_acc_unlocked" not in st.session_state:
+    st.session_state["bab_acc_unlocked"] = [False, False, False]
 
 def _go_home():
     st.session_state.page = "Home"
@@ -269,7 +285,7 @@ elif page == "BookABin":
     st.title("📦 BookABin")
     st.markdown("---")
 
-    bab_tab_prices, bab_tab_signin = st.tabs(["🔍 Check Price", "🔑 Supplier Sign In"])
+    bab_tab_prices, bab_tab_signin = st.tabs(["🔍 Check Price", "� Sign In Information"])
 
     # -----------------------------------------------------------------------
     # Sub-tab: Check Price (BookABin only)
@@ -374,28 +390,98 @@ elif page == "BookABin":
             )
 
     # -----------------------------------------------------------------------
-    # Sub-tab: Supplier Sign In
+    # Sub-tab: Sign In Information  (3 saved accounts, passwords locked)
     # -----------------------------------------------------------------------
     with bab_tab_signin:
-        st.subheader("Supplier Sign In — bookabin.com.au")
-        st.markdown("Log in to your BookABin supplier account.")
+        st.subheader("🔐 Sign In Information — bookabin.com.au")
+        st.caption("Saved credentials for up to 3 BookABin supplier accounts. Passwords are hidden and protected.")
+        st.markdown("---")
 
-        bab_account  = st.text_input("Account (Supplier ID)", key="bab_acc")
-        bab_password = st.text_input("Password", type="password", key="bab_pwd")
-        sign_in_btn  = st.button("Sign In", type="primary", key="bab_signin_btn")
+        accounts  = st.session_state["bab_accounts"]        # list of 3 dicts
+        unlocked  = st.session_state["bab_acc_unlocked"]    # list of 3 bools
 
-        if sign_in_btn:
-            if not bab_account or not bab_password:
-                st.error("Please enter your Supplier ID and password.")
-            else:
-                with st.spinner("Signing in to BookABin…"):
-                    ok, msg, screenshot = Bookabin.login(bab_account, bab_password)
-                if ok:
-                    st.success(msg)
+        for i in range(3):
+            acc = accounts[i]
+            with st.expander(f"**{acc['label']}**  —  Supplier ID: `{acc['supplier_id'] or '(not set)'}`", expanded=True):
+
+                # ── View row: Supplier ID + masked password ──
+                v1, v2 = st.columns([1, 1])
+                with v1:
+                    new_id = st.text_input(
+                        "Supplier ID",
+                        value=acc["supplier_id"],
+                        key=f"bab_sid_{i}",
+                    )
+                with v2:
+                    # Always show masked placeholder; real value never printed
+                    masked = "••••••••" if acc["password"] else "(not set)"
+                    st.text_input(
+                        "Password",
+                        value=masked,
+                        disabled=True,
+                        key=f"bab_pwd_display_{i}",
+                    )
+
+                # Save Supplier ID change immediately (no unlock needed)
+                if new_id != acc["supplier_id"]:
+                    accounts[i]["supplier_id"] = new_id
+                    _save_cache(_BAB_ACCOUNTS, accounts)
+
+                # ── Unlock / change password section ──
+                if not unlocked[i]:
+                    st.markdown("🔒 **Password is locked.** Enter the current password to unlock and change it.")
+                    ul1, ul2 = st.columns([2, 1])
+                    with ul1:
+                        entered = st.text_input(
+                            "Enter current password to unlock",
+                            type="password",
+                            key=f"bab_unlock_{i}",
+                        )
+                    with ul2:
+                        st.write("")
+                        st.write("")
+                        unlock_btn = st.button("🔓 Unlock", key=f"bab_unlock_btn_{i}")
+
+                    if unlock_btn:
+                        if not acc["password"] or entered == acc["password"]:
+                            # Empty password (not set yet) → allow unlock directly
+                            unlocked[i] = True
+                            st.session_state["bab_acc_unlocked"] = unlocked
+                            st.rerun()
+                        else:
+                            st.error("❌ Incorrect password.")
                 else:
-                    st.error(msg)
-                if screenshot:
-                    st.image(screenshot, caption="Page after login attempt", use_container_width=True)
+                    # ── Edit mode: set new password ──
+                    st.markdown("🔓 **Unlocked.** Set a new password below.")
+                    e1, e2, e3 = st.columns([2, 2, 1])
+                    with e1:
+                        new_pwd = st.text_input("New Password", type="password", key=f"bab_newpwd_{i}")
+                    with e2:
+                        confirm_pwd = st.text_input("Confirm Password", type="password", key=f"bab_confirmpwd_{i}")
+                    with e3:
+                        st.write("")
+                        st.write("")
+                        save_btn = st.button("💾 Save", key=f"bab_savepwd_{i}", type="primary")
+
+                    cancel_btn = st.button("🔒 Cancel & Lock", key=f"bab_cancel_{i}")
+
+                    if save_btn:
+                        if not new_pwd:
+                            st.error("New password cannot be empty.")
+                        elif new_pwd != confirm_pwd:
+                            st.error("❌ Passwords do not match.")
+                        else:
+                            accounts[i]["password"] = new_pwd
+                            _save_cache(_BAB_ACCOUNTS, accounts)
+                            unlocked[i] = False
+                            st.session_state["bab_acc_unlocked"] = unlocked
+                            st.success(f"✅ Password for {acc['label']} saved.")
+                            st.rerun()
+
+                    if cancel_btn:
+                        unlocked[i] = False
+                        st.session_state["bab_acc_unlocked"] = unlocked
+                        st.rerun()
 
 # ===========================================================================
 # PAGE: BestPriceSkipBins Sign In
