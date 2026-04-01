@@ -21,17 +21,14 @@ import Skipbinsonline as SBO
 
 def _to_df(results: dict, waste_types_map: dict, all_sizes: list) -> pd.DataFrame:
     rows = []
-    for wt, valid_sizes in waste_types_map.items():
+    for wt in waste_types_map:
         row = {"Waste Type": wt}
         for s in all_sizes:
-            if s not in valid_sizes:
-                row[f"{s} m³"] = "—"
+            price = results.get(wt, {}).get(s)
+            if isinstance(price, (int, float)):
+                row[f"{s} m³"] = f"${price:,.0f}"
             else:
-                price = results.get(wt, {}).get(s)
-                if isinstance(price, (int, float)):
-                    row[f"{s} m³"] = f"${price:,.0f}"
-                else:
-                    row[f"{s} m³"] = "N/A"
+                row[f"{s} m³"] = "N/A"
         rows.append(row)
     return pd.DataFrame(rows).set_index("Waste Type")
 
