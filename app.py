@@ -81,6 +81,79 @@ def _load_cache(path: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# GitHub Gist cloud helpers  (accounts sync across machines / Streamlit Cloud)
+# ---------------------------------------------------------------------------
+# Requires two keys in .streamlit/secrets.toml  (or Streamlit Cloud Secrets):
+#   [gist]
+#   token   = "ghp_xxxxxxxxxxxxxxxxxxxx"   # GitHub PAT with gist scope
+#   gist_id = "xxxxxxxxxxxxxxxxxxxxxxxx"   # ID of an existing private Gist
+#
+# The Gist must contain a file called  "bab_accounts.json".
+# ---------------------------------------------------------------------------
+
+import requests as _requests
+
+_GIST_FILENAME = "bab_accounts.json"
+
+def _gist_token() -> str | None:
+    """Return GitHub token from st.secrets, or None if not configured."""
+    try:
+        return st.secrets["gist"]["token"]
+    except Exception:
+        return None
+
+def _gist_id() -> str | None:
+    """Return Gist ID from st.secrets, or None if not configured."""
+    try:
+        return st.secrets["gist"]["gist_id"]
+    except Exception:
+        return None
+
+def _gist_load() -> list | None:
+    """
+    Fetch account list from the private GitHub Gist.
+    Returns the parsed list, or None on any error / not configured.
+    """
+    token = _gist_token()
+    gid   = _gist_id()
+    if not token or not gid:
+        return None
+    try:
+        resp = _requests.get(
+            f"https://api.github.com/gists/{gid}",
+            headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        content = resp.json()["files"][_GIST_FILENAME]["content"]
+        data = json.loads(content)
+        return data if isinstance(data, list) else None
+    except Exception:
+        return None
+
+def _gist_save(accounts: list) -> bool:
+    """
+    Write account list to the private GitHub Gist.
+    Returns True on success, False on failure / not configured.
+    """
+    token = _gist_token()
+    gid   = _gist_id()
+    if not token or not gid:
+        return False
+    try:
+        resp = _requests.patch(
+            f"https://api.github.com/gists/{gid}",
+            headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
+            json={"files": {_GIST_FILENAME: {"content": json.dumps(accounts, indent=2)}}},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        return True
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
 
@@ -107,8 +180,11 @@ if "bab_results" not in st.session_state:
         st.session_state["bab_search_pud"] = _cached.get("pud", "")
 
 # Restore saved accounts (survives F5)
+# Priority: 1) Gist (cloud)  2) local .cache  3) default empty list
 if "bab_accounts" not in st.session_state:
-    _acc = _load_cache(_BAB_ACCOUNTS)
+    _acc = _gist_load()                                        # try cloud first
+    if not _acc:
+        _acc = _load_cache(_BAB_ACCOUNTS)                      # fall back to disk
     st.session_state["bab_accounts"] = _acc if isinstance(_acc, list) else list(_DEFAULT_ACCOUNTS)
 
 # Per-account unlock flags (which account is currently in edit mode)
@@ -426,6 +502,7 @@ elif page == "BookABin":
                 if new_id != acc["supplier_id"]:
                     accounts[i]["supplier_id"] = new_id
                     _save_cache(_BAB_ACCOUNTS, accounts)
+                    _gist_save(accounts)
 
                 # ── Unlock / change password section ──
                 if not unlocked[i]:
@@ -473,6 +550,7 @@ elif page == "BookABin":
                         else:
                             accounts[i]["password"] = new_pwd
                             _save_cache(_BAB_ACCOUNTS, accounts)
+                            _gist_save(accounts)
                             unlocked[i] = False
                             st.session_state["bab_acc_unlocked"] = unlocked
                             st.success(f"✅ Password for {acc['label']} saved.")

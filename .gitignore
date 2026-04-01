@@ -15,3 +15,9 @@ chromedriver-win64/
 # Python env
 .venv/
 venv/
+
+# Streamlit secrets (contains API tokens – never commit)
+.streamlit/secrets.toml
+
+# Local disk cache (runtime data, not source code)
+.cache/
