@@ -262,9 +262,6 @@ elif page == "BookABin":
                 st.error("Please fill in all fields.")
                 st.stop()
 
-            bab_results: dict = {}
-            bab_lock = threading.Lock()
-
             def _run_bab(run_fn, *args):
                 cell_q   = queue.Queue()
                 status_q = queue.Queue()
@@ -278,50 +275,64 @@ elif page == "BookABin":
                 return out
 
             with st.spinner("🔍 Fetching prices from BookABin… (this may take a minute)"):
-                bab_results = _run_bab(Bookabin.run_search, bab_postcode, bab_dod, bab_pud)
+                _fetched = _run_bab(Bookabin.run_search, bab_postcode, bab_dod, bab_pud)
 
-            if not bab_results:
+            if not _fetched:
                 st.warning("No data returned from BookABin. Check the postcode and dates, then try again.")
+                st.session_state.pop("bab_results", None)
             else:
-                st.success(
-                    f"✅ Done — Postcode **{bab_postcode}**  |  {bab_dod} → {bab_pud}  |  BookABin prices loaded."
-                )
+                # ── Persist results so they survive tab switches ──
+                st.session_state["bab_results"]  = _fetched
+                st.session_state["bab_search_pc"]  = bab_postcode
+                st.session_state["bab_search_dod"] = bab_dod
+                st.session_state["bab_search_pud"] = bab_pud
 
-                # --- Cheapest price highlight ---
-                st.subheader("💰 Cheapest Available Price")
-                cheapest_price = None
-                cheapest_wt    = None
-                cheapest_size  = None
-                for wt, sizes in bab_results.items():
-                    for sz, pr in sizes.items():
-                        if isinstance(pr, (int, float)):
-                            if cheapest_price is None or pr < cheapest_price:
-                                cheapest_price = pr
-                                cheapest_wt    = wt
-                                cheapest_size  = sz
+        # ── Render from session_state (persists across tab switches) ──
+        if "bab_results" in st.session_state:
+            bab_results  = st.session_state["bab_results"]
+            saved_pc  = st.session_state.get("bab_search_pc", "")
+            saved_dod = st.session_state.get("bab_search_dod", "")
+            saved_pud = st.session_state.get("bab_search_pud", "")
 
-                if cheapest_price is not None:
-                    ch_col1, ch_col2, ch_col3 = st.columns(3)
-                    ch_col1.metric("Waste Type",   cheapest_wt)
-                    ch_col2.metric("Bin Size",     f"{cheapest_size} m³")
-                    ch_col3.metric("Best Price",   f"${cheapest_price:,.0f}")
-                else:
-                    st.info("No priced results found for this postcode / date range.")
+            st.success(
+                f"✅ Done — Postcode **{saved_pc}**  |  {saved_dod} → {saved_pud}  |  BookABin prices loaded."
+            )
 
-                st.markdown("---")
+            # --- Cheapest price highlight ---
+            st.subheader("💰 Cheapest Available Price")
+            cheapest_price = None
+            cheapest_wt    = None
+            cheapest_size  = None
+            for wt, sizes in bab_results.items():
+                for sz, pr in sizes.items():
+                    if isinstance(pr, (int, float)):
+                        if cheapest_price is None or pr < cheapest_price:
+                            cheapest_price = pr
+                            cheapest_wt    = wt
+                            cheapest_size  = sz
 
-                # --- Full data tables ---
-                st.subheader("📋 All Available Sizes")
-                st.dataframe(
-                    _to_df(bab_results, Bookabin.WASTE_TYPES, Bookabin.ALL_SIZES),
-                    use_container_width=True,
-                )
+            if cheapest_price is not None:
+                ch_col1, ch_col2, ch_col3 = st.columns(3)
+                ch_col1.metric("Waste Type", cheapest_wt)
+                ch_col2.metric("Bin Size",   f"{cheapest_size} m³")
+                ch_col3.metric("Best Price", f"${cheapest_price:,.0f}")
+            else:
+                st.info("No priced results found for this postcode / date range.")
 
-                st.subheader("📋 Full Size Range")
-                st.dataframe(
-                    _to_df(bab_results, Bookabin.WASTE_TYPES, FULL_SIZES),
-                    use_container_width=True,
-                )
+            st.markdown("---")
+
+            # --- Full data tables ---
+            st.subheader("📋 All Available Sizes")
+            st.dataframe(
+                _to_df(bab_results, Bookabin.WASTE_TYPES, Bookabin.ALL_SIZES),
+                use_container_width=True,
+            )
+
+            st.subheader("📋 Full Size Range")
+            st.dataframe(
+                _to_df(bab_results, Bookabin.WASTE_TYPES, FULL_SIZES),
+                use_container_width=True,
+            )
 
     # -----------------------------------------------------------------------
     # Sub-tab: Supplier Sign In
