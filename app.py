@@ -19,6 +19,13 @@ import Skipbinsonline as SBO
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Full union of every size across all four scrapers, sorted numerically.
+FULL_SIZES = sorted(
+    set(Bookabin.ALL_SIZES) | set(BPSB.ALL_SIZES) | set(SBF.ALL_SIZES) | set(SBO.ALL_SIZES),
+    key=float,
+)
+
+
 def _to_df(results: dict, waste_types_map: dict, all_sizes: list) -> pd.DataFrame:
     rows = []
     for wt in waste_types_map:
@@ -180,8 +187,10 @@ if page == "Home":
             st.caption("Prices from bookabin.com.au — cheapest available supplier.")
             bab_res = results_store.get("bab", {})
             if bab_res:
-                df = _to_df(bab_res, Bookabin.WASTE_TYPES, Bookabin.ALL_SIZES)
-                st.dataframe(df, use_container_width=True)
+                st.subheader("Available Sizes")
+                st.dataframe(_to_df(bab_res, Bookabin.WASTE_TYPES, Bookabin.ALL_SIZES), use_container_width=True)
+                st.subheader("Full Range")
+                st.dataframe(_to_df(bab_res, Bookabin.WASTE_TYPES, FULL_SIZES), use_container_width=True)
             else:
                 st.warning("No data returned from BookABin.")
 
@@ -189,8 +198,10 @@ if page == "Home":
             st.caption("Prices from bestpriceskipbins.com.au — cheapest available supplier.")
             bpsb_res = results_store.get("bpsb", {})
             if bpsb_res:
-                df = _to_df(bpsb_res, BPSB.WASTE_TYPES, BPSB.ALL_SIZES)
-                st.dataframe(df, use_container_width=True)
+                st.subheader("Available Sizes")
+                st.dataframe(_to_df(bpsb_res, BPSB.WASTE_TYPES, BPSB.ALL_SIZES), use_container_width=True)
+                st.subheader("Full Range")
+                st.dataframe(_to_df(bpsb_res, BPSB.WASTE_TYPES, FULL_SIZES), use_container_width=True)
             else:
                 st.warning("No data returned from BestPriceSkipBins.")
 
@@ -198,8 +209,10 @@ if page == "Home":
             st.caption("Prices from skipbinfinder.com.au — cheapest available supplier.")
             sbf_res = results_store.get("sbf", {})
             if sbf_res:
-                df = _to_df(sbf_res, SBF.WASTE_TYPES, SBF.ALL_SIZES)
-                st.dataframe(df, use_container_width=True)
+                st.subheader("Available Sizes")
+                st.dataframe(_to_df(sbf_res, SBF.WASTE_TYPES, SBF.ALL_SIZES), use_container_width=True)
+                st.subheader("Full Range")
+                st.dataframe(_to_df(sbf_res, SBF.WASTE_TYPES, FULL_SIZES), use_container_width=True)
             else:
                 st.warning("No data returned from SkipBinFinder.")
 
@@ -208,8 +221,10 @@ if page == "Home":
             sbo_res = results_store.get("sbo", {})
             if sbo_res:
                 sbo_waste = {wt: list(sizes.keys()) for wt, sizes in sbo_res.items()}
-                df = _to_df(sbo_res, sbo_waste, SBO.ALL_SIZES)
-                st.dataframe(df, use_container_width=True)
+                st.subheader("Available Sizes")
+                st.dataframe(_to_df(sbo_res, sbo_waste, SBO.ALL_SIZES), use_container_width=True)
+                st.subheader("Full Range")
+                st.dataframe(_to_df(sbo_res, sbo_waste, FULL_SIZES), use_container_width=True)
             else:
                 st.warning("No data returned from SkipBinsOnline.")
 
