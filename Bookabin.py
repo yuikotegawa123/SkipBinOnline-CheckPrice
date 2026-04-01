@@ -367,6 +367,12 @@ def run_search(postcode, dod, pud, cell_q, status_q, done_event):
 
 RATES_URL_TPL = "https://www.bookabin.com.au/supplier/rates_manage.aspx?fromdate={date}"
 
+# XPath for the Edit Row image-button and the Update Row image-button
+_EDIT_BTN_XPATH   = ".//input[@alt='Edit Row' or @title='Edit Row' or @value='Edit']"
+_UPDATE_BTN_XPATH = ".//input[@alt='Update Row' or @title='Update Row' or @value='Update']"
+_CANCEL_BTN_XPATH = ".//input[@alt='Cancel' or @title='Cancel' or @value='Cancel']"
+
+
 def _login_driver(driver, supplier_id: str, password: str) -> bool:
     """
     Log into bookabin.com.au/suppliers.aspx using an existing driver.
@@ -414,121 +420,37 @@ def _login_driver(driver, supplier_id: str, password: str) -> bool:
         return False
 
 
-def _get_header_columns(driver) -> list:
+def _get_data_rows(driver):
     """
-    Read the column header texts from the rates table.
-    Returns list of header strings (e.g. ['Description', 'Day 1', 'Day 2', ...]).
+    Return all <tr> elements that have an Edit Row button (i.e. data rows, not header rows).
     """
     from selenium.webdriver.common.by import By
-    headers = []
-    try:
-        # GridView header row is typically the first <tr> with <th> elements
-        th_elems = driver.find_elements(By.XPATH, "//table//th")
-        if th_elems:
-            return [th.text.strip() for th in th_elems]
-        # Fallback: first <tr> with only <td> — treat as header
-        first_tr = driver.find_elements(By.XPATH, "//table//tr[1]/td")
-        return [td.text.strip() for td in first_tr]
-    except Exception:
-        return headers
-
-
-def _click_edit_row(driver, row_idx: int) -> bool:
-    """
-    Click the Edit link/button for the given row index in the GridView.
-    The Edit control is typically the first <a> or <input type=submit> in the row
-    whose text or value is "Edit".
-    Returns True if clicked successfully.
-    """
-    import time
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
-    try:
-        # Find all Edit buttons/links in the table
-        edit_btns = driver.find_elements(
-            By.XPATH,
-            "//table//tr[.//a[normalize-space(text())='Edit'] or "
-            ".//input[@value='Edit'] or .//button[normalize-space(text())='Edit']]"
-            "//a[normalize-space(text())='Edit'] | "
-            "//table//tr[.//a[normalize-space(text())='Edit'] or "
-            ".//input[@value='Edit'] or .//button[normalize-space(text())='Edit']]"
-            "//input[@value='Edit'] | "
-            "//table//tr[.//a[normalize-space(text())='Edit'] or "
-            ".//input[@value='Edit'] or .//button[normalize-space(text())='Edit']]"
-            "//button[normalize-space(text())='Edit']"
-        )
-        if row_idx < len(edit_btns):
-            driver.execute_script("arguments[0].scrollIntoView(true);", edit_btns[row_idx])
-            driver.execute_script("arguments[0].click();", edit_btns[row_idx])
-            time.sleep(2)
-            return True
-    except Exception:
-        pass
-    return False
-
-
-def _click_update_row(driver) -> bool:
-    """
-    Click the Update/Save link/button for the currently-editing row.
-    Returns True if clicked successfully.
-    """
-    import time
-    from selenium.webdriver.common.by import By
-    try:
-        update_btn = driver.find_element(
-            By.XPATH,
-            "//a[normalize-space(text())='Update'] | //input[@value='Update'] | "
-            "//button[normalize-space(text())='Update'] | "
-            "//a[normalize-space(text())='Save'] | //input[@value='Save'] | "
-            "//button[normalize-space(text())='Save']"
-        )
-        driver.execute_script("arguments[0].scrollIntoView(true);", update_btn)
-        driver.execute_script("arguments[0].click();", update_btn)
-        time.sleep(2)
-        return True
-    except Exception:
-        return False
-
-
-def _click_cancel_row(driver) -> bool:
-    """Cancel edit mode for the current row."""
-    import time
-    from selenium.webdriver.common.by import By
-    try:
-        cancel_btn = driver.find_element(
-            By.XPATH,
-            "//a[normalize-space(text())='Cancel'] | //input[@value='Cancel'] | "
-            "//button[normalize-space(text())='Cancel']"
-        )
-        driver.execute_script("arguments[0].click();", cancel_btn)
-        time.sleep(1)
-        return True
-    except Exception:
-        return False
+    return driver.find_elements(
+        By.XPATH,
+        f"//tr[.//input[@alt='Edit Row' or @title='Edit Row' or @value='Edit']]",
+    )
 
 
 def get_rates(supplier_id: str, password: str, from_date: str) -> dict:
     """
-    Log in and scrape the current rates table from rates_manage.aspx.
-    For each data row, clicks the "Edit" button to reveal the editable text
-    inputs, captures all field IDs and current values, then cancels the edit
-    before moving to the next row.
+    Log in, navigate to rates_manage.aspx, then for each data row click the
+    ``input[@alt='Edit Row']`` button, scrape the revealed text inputs (the
+    first one being the first-day-column price), then click Cancel to restore
+    the row before moving on.
 
     Returns:
         {
             "ok":      True | False,
             "message": str,
-            "headers": [str, ...],          # column header labels
             "rows": [
                 {
-                    "row_index":   int,     # 0-based position in the table
-                    "description": str,     # bin size / waste type label (col 0)
-                    "fields": {             # input field id -> current value
-                        "<field_id>": "<value>", ...
-                    },
-                    "field_order": [str],   # field IDs in left-to-right column order
-                }
+                    "row_index":   int,   # 0-based position in the table
+                    "description": str,   # bin size / waste-type label
+                    "first_field_id":  str,   # id of the first-day-column price input
+                    "first_field_val": str,   # current value of that field
+                    "all_fields": {field_id: value, ...}  # all editable fields
+                },
+                ...
             ]
         }
     """
@@ -541,7 +463,7 @@ def get_rates(supplier_id: str, password: str, from_date: str) -> dict:
     try:
         driver = make_driver()
         if not _login_driver(driver, supplier_id, password):
-            return {"ok": False, "message": "Login failed — check Supplier ID and password.", "rows": [], "headers": []}
+            return {"ok": False, "message": "Login failed — check Supplier ID and password.", "rows": []}
 
         url = RATES_URL_TPL.format(date=from_date)
         driver.get(url)
@@ -549,82 +471,87 @@ def get_rates(supplier_id: str, password: str, from_date: str) -> dict:
             lambda d: "rates" in d.page_source.lower() or "fromdate" in d.current_url.lower()
         )
 
-        headers = _get_header_columns(driver)
-
-        # Count data rows (rows that have an Edit button)
-        def _count_edit_rows():
-            return len(driver.find_elements(
-                By.XPATH,
-                "//table//tr[.//a[normalize-space(text())='Edit'] or "
-                ".//input[@value='Edit'] or .//button[normalize-space(text())='Edit']]"
-            ))
-
-        num_rows = _count_edit_rows()
-        if num_rows == 0:
+        # Count how many data rows exist before entering edit mode
+        data_rows = _get_data_rows(driver)
+        if not data_rows:
             body_text = driver.find_element(By.TAG_NAME, "body").text[:2000]
-            return {
-                "ok": True,
-                "message": "Logged in but no rows with Edit buttons found. Raw preview below.",
-                "headers": headers,
-                "rows": [],
-                "raw": body_text,
-            }
+            return {"ok": True, "message": "Logged in but no editable rows found. Raw preview below.", "rows": [], "raw": body_text}
 
         rows = []
+        num_rows = len(data_rows)
+
         for row_idx in range(num_rows):
-            # Re-count after each postback (row list may be re-rendered)
-            current_count = _count_edit_rows()
-            if row_idx >= current_count:
-                break
-
-            if not _click_edit_row(driver, row_idx):
-                continue
-
-            # Now the row is in edit mode — find the row containing inputs
             try:
-                editing_tr = driver.find_element(
-                    By.XPATH,
-                    "//table//tr[.//input[@type='text'] or .//input[@type='number']]"
-                )
-                cells = editing_tr.find_elements(By.TAG_NAME, "td")
-                # Description is usually the first non-input cell
-                description = ""
-                for cell in cells:
-                    cell_text = cell.text.strip()
-                    if cell_text and not cell.find_elements(By.XPATH, ".//input"):
-                        description = cell_text
-                        break
-                if not description:
-                    description = f"Row {row_idx}"
+                # Re-fetch rows each iteration — DOM may rebuild after edit/cancel
+                data_rows = _get_data_rows(driver)
+                if row_idx >= len(data_rows):
+                    break
+                tr = data_rows[row_idx]
 
-                inputs = editing_tr.find_elements(
-                    By.XPATH, ".//input[@type='text' or @type='number']"
-                )
-                fields = {}
-                field_order = []
-                for inp in inputs:
-                    fid = (inp.get_attribute("id") or inp.get_attribute("name") or
-                           f"field_{row_idx}_{len(fields)}")
-                    val = inp.get_attribute("value") or ""
-                    fields[fid] = val
-                    field_order.append(fid)
+                # Read the description from the first <td> (before entering edit mode)
+                cells = tr.find_elements(By.TAG_NAME, "td")
+                description = cells[0].text.strip() if cells else f"Row {row_idx}"
+
+                # Click the Edit Row button
+                edit_btn = tr.find_element(By.XPATH, _EDIT_BTN_XPATH)
+                driver.execute_script("arguments[0].scrollIntoView(true);", edit_btn)
+                driver.execute_script("arguments[0].click();", edit_btn)
+                time.sleep(1)
+
+                # Re-fetch the same row index (now in edit mode)
+                data_rows_after = _get_data_rows(driver)
+                # The row in edit mode no longer has the Edit button — look for Update button
+                # The edited row is the one with an Update Row button
+                edit_tr = None
+                try:
+                    edit_tr = driver.find_element(
+                        By.XPATH,
+                        f"//tr[.//input[@alt='Update Row' or @title='Update Row' or @value='Update']]"
+                    )
+                except Exception:
+                    pass
+
+                all_fields = {}
+                if edit_tr is not None:
+                    inputs = edit_tr.find_elements(By.XPATH, ".//input[@type='text']")
+                    for inp in inputs:
+                        fid = (inp.get_attribute("id") or
+                               inp.get_attribute("name") or
+                               f"field_{row_idx}_{len(all_fields)}")
+                        val = inp.get_attribute("value") or ""
+                        all_fields[fid] = val
+
+                first_fid = next(iter(all_fields), None)
+                first_val = all_fields[first_fid] if first_fid else ""
 
                 rows.append({
-                    "row_index":   row_idx,
-                    "description": description,
-                    "fields":      fields,
-                    "field_order": field_order,
+                    "row_index":       row_idx,
+                    "description":     description,
+                    "first_field_id":  first_fid,
+                    "first_field_val": first_val,
+                    "all_fields":      all_fields,
                 })
+
+                # Cancel to leave the row unchanged and return to view mode
+                try:
+                    if edit_tr is not None:
+                        cancel_btn = edit_tr.find_element(By.XPATH, _CANCEL_BTN_XPATH)
+                        driver.execute_script("arguments[0].click();", cancel_btn)
+                        time.sleep(1)
+                except Exception:
+                    pass
+
             except Exception:
-                pass
+                continue
 
-            # Cancel to return to read mode before next row
-            _click_cancel_row(driver)
+        if not rows:
+            body_text = driver.find_element(By.TAG_NAME, "body").text[:2000]
+            return {"ok": True, "message": "Logged in but no editable rows found. Raw preview below.", "rows": [], "raw": body_text}
 
-        return {"ok": True, "message": f"Loaded {len(rows)} rate rows.", "headers": headers, "rows": rows}
+        return {"ok": True, "message": f"Loaded {len(rows)} rate rows.", "rows": rows}
 
     except Exception as exc:
-        return {"ok": False, "message": f"Error: {exc}", "rows": [], "headers": []}
+        return {"ok": False, "message": f"Error: {exc}", "rows": []}
     finally:
         if driver:
             try: driver.quit()
@@ -634,15 +561,13 @@ def get_rates(supplier_id: str, password: str, from_date: str) -> dict:
 def update_rates(supplier_id: str, password: str, from_date: str,
                  updates: dict, status_q=None) -> dict:
     """
-    Log in, navigate to rates_manage.aspx, and update specific price fields.
+    Log in, navigate to rates_manage.aspx.
+    For each entry in ``updates`` (row_index -> new_price), click the
+    ``input[@alt='Edit Row']`` button for that row, overwrite the FIRST text
+    input (first-day-column price) with the new value, then click
+    ``input[@alt='Update Row']`` to save that row.
 
-    For each field_id in `updates`, this function:
-      1. Clicks the Edit button on the row that owns that field.
-      2. Fills the field with the new value.
-      3. Clicks Update to save the row.
-
-    updates: { "<field_id>": "<new_value>", ... }
-             (field IDs come from get_rates() → rows[n]["fields"])
+    updates: { row_index (int): new_price (str|float), ... }
 
     Returns:
         {"ok": True|False, "message": str, "screenshot": bytes|None}
@@ -650,6 +575,7 @@ def update_rates(supplier_id: str, password: str, from_date: str,
     import time
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
 
     def _status(msg):
         if status_q:
@@ -670,69 +596,84 @@ def update_rates(supplier_id: str, password: str, from_date: str,
             lambda d: "rates" in d.page_source.lower() or "fromdate" in d.current_url.lower()
         )
 
-        # Group updates by row: find which row contains each field ID
-        # by clicking Edit on each row, checking field IDs, then Cancel.
-        def _count_edit_rows():
-            return len(driver.find_elements(
-                By.XPATH,
-                "//table//tr[.//a[normalize-space(text())='Edit'] or "
-                ".//input[@value='Edit'] or .//button[normalize-space(text())='Edit']]"
-            ))
-
-        # First pass: map field_id → row_index
-        num_rows     = _count_edit_rows()
-        field_to_row = {}   # field_id -> row_index
-        for row_idx in range(num_rows):
-            if _count_edit_rows() == 0:
-                break
-            if not _click_edit_row(driver, row_idx):
-                continue
-            try:
-                tr = driver.find_element(
-                    By.XPATH, "//table//tr[.//input[@type='text' or @type='number']]"
-                )
-                inputs = tr.find_elements(By.XPATH, ".//input[@type='text' or @type='number']")
-                for inp in inputs:
-                    fid = inp.get_attribute("id") or inp.get_attribute("name")
-                    if fid and fid in updates:
-                        field_to_row[fid] = row_idx
-            except Exception:
-                pass
-            _click_cancel_row(driver)
-
-        if not field_to_row:
-            shot = driver.get_screenshot_as_png()
-            return {"ok": False, "message": "Could not locate any of the requested field IDs on the page.", "screenshot": shot}
-
-        # Second pass: group fields by row, click Edit, fill, click Update
-        rows_to_update = {}
-        for fid, ridx in field_to_row.items():
-            rows_to_update.setdefault(ridx, {})[fid] = updates[fid]
-
         updated_count = 0
-        for row_idx, row_fields in sorted(rows_to_update.items()):
-            if not _click_edit_row(driver, row_idx):
-                _status(f"⚠ Could not click Edit for row {row_idx}")
-                continue
-            for fid, new_value in row_fields.items():
+        skipped = []
+
+        for row_idx, new_price in updates.items():
+            try:
+                # Re-fetch data rows each iteration
+                data_rows = _get_data_rows(driver)
+                if row_idx >= len(data_rows):
+                    skipped.append(str(row_idx))
+                    continue
+                tr = data_rows[row_idx]
+
+                # Read description for logging
+                cells = tr.find_elements(By.TAG_NAME, "td")
+                description = cells[0].text.strip() if cells else f"Row {row_idx}"
+
+                # Click Edit Row
+                edit_btn = tr.find_element(By.XPATH, _EDIT_BTN_XPATH)
+                driver.execute_script("arguments[0].scrollIntoView(true);", edit_btn)
+                driver.execute_script("arguments[0].click();", edit_btn)
+                time.sleep(1)
+                _status(f"Editing row {row_idx}: {description}")
+
+                # Find the row now in edit mode (has Update Row button)
+                edit_tr = driver.find_element(
+                    By.XPATH,
+                    "//tr[.//input[@alt='Update Row' or @title='Update Row' or @value='Update']]"
+                )
+
+                # Fill the FIRST text input — that is the first-day-column price
+                text_inputs = edit_tr.find_elements(By.XPATH, ".//input[@type='text']")
+                if not text_inputs:
+                    # Cancel and skip
+                    try:
+                        cancel_btn = edit_tr.find_element(By.XPATH, _CANCEL_BTN_XPATH)
+                        driver.execute_script("arguments[0].click();", cancel_btn)
+                        time.sleep(0.5)
+                    except Exception:
+                        pass
+                    skipped.append(str(row_idx))
+                    continue
+
+                first_input = text_inputs[0]
+                driver.execute_script("arguments[0].scrollIntoView(true);", first_input)
+                first_input.clear()
+                first_input.send_keys(str(new_price))
+                _status(f"  → Set first-day price to {new_price}")
+
+                # Click Update Row button
+                update_btn = edit_tr.find_element(By.XPATH, _UPDATE_BTN_XPATH)
+                driver.execute_script("arguments[0].click();", update_btn)
+                time.sleep(1.5)
+                updated_count += 1
+
+            except Exception as row_exc:
+                _status(f"⚠ Row {row_idx} failed: {row_exc}")
+                # Try to cancel any open edit before continuing
                 try:
-                    el = driver.find_element(By.ID, fid)
-                    driver.execute_script("arguments[0].scrollIntoView(true);", el)
-                    driver.execute_script("arguments[0].value = '';", el)
-                    el.clear()
-                    el.send_keys(str(new_value))
-                    updated_count += 1
-                    _status(f"Row {row_idx}: {fid} → {new_value}")
+                    edit_tr_fallback = driver.find_element(
+                        By.XPATH,
+                        "//tr[.//input[@alt='Update Row' or @title='Update Row' or @value='Update']]"
+                    )
+                    cancel_btn = edit_tr_fallback.find_element(By.XPATH, _CANCEL_BTN_XPATH)
+                    driver.execute_script("arguments[0].click();", cancel_btn)
+                    time.sleep(0.5)
                 except Exception:
-                    _status(f"⚠ Row {row_idx}: could not fill {fid}")
-            if not _click_update_row(driver):
-                _status(f"⚠ Row {row_idx}: could not click Update — trying Cancel")
-                _click_cancel_row(driver)
+                    pass
+                skipped.append(str(row_idx))
+                continue
 
         shot = driver.get_screenshot_as_png()
         if updated_count == 0:
-            return {"ok": False, "message": "No fields were updated — field IDs may have changed.", "screenshot": shot}
-        return {"ok": True, "message": f"✅ {updated_count} field(s) updated across {len(rows_to_update)} row(s).", "screenshot": shot}
+            return {"ok": False, "message": "No rows were updated — check row indices or Edit Row button structure.", "screenshot": shot}
+
+        msg = f"✅ {updated_count} row(s) updated."
+        if skipped:
+            msg += f"  ⚠ Skipped row(s): {', '.join(skipped)}."
+        return {"ok": True, "message": msg, "screenshot": shot}
 
     except Exception as exc:
         shot = None
@@ -745,105 +686,21 @@ def update_rates(supplier_id: str, password: str, from_date: str,
             except Exception: pass
 
 
-# ---------------------------------------------------------------------------
-# Size / description matching helpers for auto-update
-# ---------------------------------------------------------------------------
-
-def _parse_size_from_description(description: str) -> str | None:
-    """
-    Extract a bin size (m³ value) from a rates-table row description string.
-    E.g. "2 Cubic Metres" → "2", "4.5m3 General Waste" → "4.5"
-    Returns the size as a string matching keys in ALL_SIZES, or None.
-    """
-    m = re.search(r'(\d+(?:\.\d+)?)\s*(?:cubic\s*m(?:etre)?s?|m3)', description, re.IGNORECASE)
-    if m:
-        return m.group(1)
-    # Fallback: bare number at start of description
-    m = re.search(r'^(\d+(?:\.\d+)?)', description.strip())
-    if m:
-        return m.group(1)
-    return None
-
-
-def _parse_waste_from_description(description: str) -> str | None:
-    """
-    Try to match a waste type name in a description string.
-    Returns the key from WASTE_TYPES that matches best, or None.
-    """
-    desc_lower = description.lower()
-    # Exact keyword checks in priority order
-    checks = [
-        ("cleanfill",     "Cleanfill/Hardfill"),
-        ("hardfill",      "Cleanfill/Hardfill"),
-        ("hard fill",     "Cleanfill/Hardfill"),
-        ("clean fill",    "Cleanfill/Hardfill"),
-        ("green",         "Green Garden Waste"),
-        ("garden",        "Green Garden Waste"),
-        ("soil",          "Soil / Dirt"),
-        ("dirt",          "Soil / Dirt"),
-        ("mixed heavy",   "Mixed Heavy Waste"),
-        ("heavy",         "Mixed Heavy Waste"),
-        ("general",       "General Waste"),
-    ]
-    for keyword, waste_type in checks:
-        if keyword in desc_lower:
-            return waste_type
-    return None
-
-
-def _lookup_price_from_results(
-    bab_results: dict,
-    size: str | None,
-    waste_type: str | None,
-) -> float | None:
-    """
-    Look up a price from the bab_results dict (waste_type → size → price).
-    Falls back to searching all waste types for the given size if waste_type
-    is unknown, returning the lowest numeric price found.
-    """
-    if size is None:
-        return None
-
-    # Direct lookup
-    if waste_type and waste_type in bab_results:
-        val = bab_results[waste_type].get(size)
-        if isinstance(val, (int, float)):
-            return float(val)
-
-    # Fallback: scan all waste types for the size, take cheapest
-    candidates = []
-    for wt_data in bab_results.values():
-        val = wt_data.get(size)
-        if isinstance(val, (int, float)):
-            candidates.append(float(val))
-    return min(candidates) if candidates else None
-
-
 def auto_update_rates(supplier_id: str, password: str, from_date: str,
-                      bab_results: dict, status_q=None) -> dict:
+                      price_map: dict, status_q=None) -> dict:
     """
-    Automatically update the "Day 1" (first) price column on rates_manage.aspx
-    for every row, using prices from `bab_results` (the All Available Sizes
-    search table) minus 1.
+    Automatically update rates on rates_manage.aspx by matching each table row's
+    description to a size/waste-type key in ``price_map``.
 
-    For each editable row on the rates page:
-      1. Parses the bin size and waste type from the row description.
-      2. Looks up that size/type in bab_results.
-      3. If found, sets the first text input in the row to  (price - 1).
-      4. Clicks Update to save.
+    For each matched row the first-day-column price field is set to:
+        price_map[matched_key]  (already adjusted by the caller, e.g. search_price - 1)
 
-    bab_results format (same as session_state["bab_results"]):
-        { waste_type_str: { size_str: price_float | "N/A" | None, ... }, ... }
+    price_map: { "3" -> 299, "6" -> 349, ... }  — key is a size string or
+               waste-type keyword that appears in the row description.
 
     Returns:
-        {
-            "ok":         True | False,
-            "message":    str,
-            "updated":    [ {"description": str, "size": str, "old_price": str,
-                             "new_price": float, "ok": bool}, ... ],
-            "skipped":    [ {"description": str, "reason": str}, ... ],
-            "screenshot": bytes | None,
-        }
+        {"ok": True|False, "message": str, "screenshot": bytes|None,
+         "matched": {row_idx: {"description": str, "new_price": value}}}
     """
     import time
     from selenium.webdriver.common.by import By
@@ -853,18 +710,14 @@ def auto_update_rates(supplier_id: str, password: str, from_date: str,
         if status_q:
             status_q.put(msg)
 
-    updated_rows = []
-    skipped_rows = []
     driver = None
     try:
         driver = make_driver()
         _status("Logging in…")
         if not _login_driver(driver, supplier_id, password):
             shot = driver.get_screenshot_as_png()
-            return {
-                "ok": False, "message": "Login failed — check Supplier ID and password.",
-                "updated": [], "skipped": [], "screenshot": shot,
-            }
+            return {"ok": False, "message": "Login failed — check Supplier ID and password.",
+                    "screenshot": shot, "matched": {}}
 
         url = RATES_URL_TPL.format(date=from_date)
         _status(f"Loading rates page for {from_date}…")
@@ -873,135 +726,142 @@ def auto_update_rates(supplier_id: str, password: str, from_date: str,
             lambda d: "rates" in d.page_source.lower() or "fromdate" in d.current_url.lower()
         )
 
-        def _count_edit_rows():
-            return len(driver.find_elements(
-                By.XPATH,
-                "//table//tr[.//a[normalize-space(text())='Edit'] or "
-                ".//input[@value='Edit'] or .//button[normalize-space(text())='Edit']]"
-            ))
+        data_rows = _get_data_rows(driver)
+        if not data_rows:
+            body_text = driver.find_element(By.TAG_NAME, "body").text[:2000]
+            return {"ok": False,
+                    "message": "Logged in but no editable rows found.",
+                    "screenshot": driver.get_screenshot_as_png(),
+                    "matched": {},
+                    "raw": body_text}
 
-        num_rows = _count_edit_rows()
-        if num_rows == 0:
-            body_text = driver.find_element(By.TAG_NAME, "body").text[:1000]
-            return {
-                "ok": False,
-                "message": "No rows with Edit buttons found on the rates page.",
-                "updated": [], "skipped": [], "screenshot": driver.get_screenshot_as_png(),
-                "raw": body_text,
-            }
-
-        _status(f"Found {num_rows} rows. Processing each row…")
+        # Build a description → new_price mapping by scanning each row
+        # (without entering edit mode) to read its label, then match against price_map
+        row_updates = {}   # row_idx (int) -> new_price
+        matched_info = {}  # row_idx -> {description, new_price}
+        num_rows = len(data_rows)
 
         for row_idx in range(num_rows):
-            # Re-check count after each postback
-            current_count = _count_edit_rows()
-            if row_idx >= current_count:
-                _status(f"Row {row_idx}: no longer visible (postback reduced rows), stopping.")
+            data_rows_cur = _get_data_rows(driver)
+            if row_idx >= len(data_rows_cur):
                 break
+            tr = data_rows_cur[row_idx]
+            cells = tr.find_elements(By.TAG_NAME, "td")
+            description = cells[0].text.strip() if cells else ""
+            desc_lower = description.lower()
 
-            # Click Edit to enter edit mode
-            if not _click_edit_row(driver, row_idx):
-                skipped_rows.append({"description": f"Row {row_idx}", "reason": "Could not click Edit button"})
-                continue
+            # Match against price_map keys — try exact size match first, then substring
+            matched_price = None
+            for key, price in price_map.items():
+                key_str = str(key).strip()
+                # Size match: "3" matches "3m3", "3 cubic", "3.0 m³" etc.
+                size_patterns = [
+                    f"{key_str}m",
+                    f"{key_str} m",
+                    f"{key_str}cubic",
+                    f"{key_str} cubic",
+                    f"{key_str}.0",
+                ]
+                if any(p in desc_lower for p in size_patterns):
+                    matched_price = price
+                    break
+                # Fallback: key appears literally in description
+                if key_str in desc_lower:
+                    matched_price = price
+                    break
 
-            # Read the editing row
-            description = f"Row {row_idx}"
-            first_field_id  = None
-            first_field_val = ""
+            if matched_price is not None:
+                row_updates[row_idx] = matched_price
+                matched_info[row_idx] = {"description": description, "new_price": matched_price}
+
+        if not row_updates:
+            shot = driver.get_screenshot_as_png()
+            return {"ok": False,
+                    "message": "No rows matched the price map keys — check the description labels on the rates page.",
+                    "screenshot": shot,
+                    "matched": matched_info}
+
+        _status(f"Matched {len(row_updates)} rows — updating…")
+
+        # Now iterate and update each matched row via Edit Row → fill → Update Row
+        updated_count = 0
+        skipped = []
+
+        for row_idx, new_price in row_updates.items():
             try:
-                editing_tr = driver.find_element(
-                    By.XPATH, "//table//tr[.//input[@type='text' or @type='number']]"
+                data_rows_cur = _get_data_rows(driver)
+                if row_idx >= len(data_rows_cur):
+                    skipped.append(str(row_idx))
+                    continue
+                tr = data_rows_cur[row_idx]
+
+                # Click Edit Row
+                edit_btn = tr.find_element(By.XPATH, _EDIT_BTN_XPATH)
+                driver.execute_script("arguments[0].scrollIntoView(true);", edit_btn)
+                driver.execute_script("arguments[0].click();", edit_btn)
+                time.sleep(1)
+                _status(f"  Editing row {row_idx}: {matched_info[row_idx]['description']} → {new_price}")
+
+                # Find the row now in edit mode
+                edit_tr = driver.find_element(
+                    By.XPATH,
+                    "//tr[.//input[@alt='Update Row' or @title='Update Row' or @value='Update']]"
                 )
-                cells = editing_tr.find_elements(By.TAG_NAME, "td")
-                # Grab description from the first non-input cell
-                for cell in cells:
-                    cell_text = cell.text.strip()
-                    if cell_text and not cell.find_elements(By.XPATH, ".//input"):
-                        description = cell_text
-                        break
 
-                # First text/number input = Day 1 price column
-                inputs = editing_tr.find_elements(
-                    By.XPATH, ".//input[@type='text' or @type='number']"
-                )
-                if inputs:
-                    first_field_id  = inputs[0].get_attribute("id") or inputs[0].get_attribute("name")
-                    first_field_val = inputs[0].get_attribute("value") or ""
-            except Exception as e:
-                skipped_rows.append({"description": description, "reason": f"Could not read editing row: {e}"})
-                _click_cancel_row(driver)
+                # Fill the FIRST text input (first-day-column price)
+                text_inputs = edit_tr.find_elements(By.XPATH, ".//input[@type='text']")
+                if not text_inputs:
+                    try:
+                        cancel_btn = edit_tr.find_element(By.XPATH, _CANCEL_BTN_XPATH)
+                        driver.execute_script("arguments[0].click();", cancel_btn)
+                        time.sleep(0.5)
+                    except Exception:
+                        pass
+                    skipped.append(str(row_idx))
+                    continue
+
+                first_input = text_inputs[0]
+                driver.execute_script("arguments[0].scrollIntoView(true);", first_input)
+                first_input.clear()
+                first_input.send_keys(str(new_price))
+
+                # Click Update Row
+                update_btn = edit_tr.find_element(By.XPATH, _UPDATE_BTN_XPATH)
+                driver.execute_script("arguments[0].click();", update_btn)
+                time.sleep(1.5)
+                updated_count += 1
+
+            except Exception as row_exc:
+                _status(f"⚠ Row {row_idx} failed: {row_exc}")
+                try:
+                    edit_tr_fb = driver.find_element(
+                        By.XPATH,
+                        "//tr[.//input[@alt='Update Row' or @title='Update Row' or @value='Update']]"
+                    )
+                    cancel_btn = edit_tr_fb.find_element(By.XPATH, _CANCEL_BTN_XPATH)
+                    driver.execute_script("arguments[0].click();", cancel_btn)
+                    time.sleep(0.5)
+                except Exception:
+                    pass
+                skipped.append(str(row_idx))
                 continue
-
-            if not first_field_id:
-                skipped_rows.append({"description": description, "reason": "No editable input fields found in row"})
-                _click_cancel_row(driver)
-                continue
-
-            # Map description → size + waste type → price from bab_results
-            size       = _parse_size_from_description(description)
-            waste_type = _parse_waste_from_description(description)
-            ref_price  = _lookup_price_from_results(bab_results, size, waste_type)
-
-            _status(f"Row {row_idx}: '{description}' → size={size}, waste={waste_type}, ref=${ref_price}")
-
-            if ref_price is None:
-                skipped_rows.append({
-                    "description": description,
-                    "reason": f"No matching price in search results (size={size}, waste={waste_type})",
-                })
-                _click_cancel_row(driver)
-                continue
-
-            new_price = round(ref_price - 1, 2)
-
-            # Fill the first-day-column field
-            try:
-                el = driver.find_element(By.ID, first_field_id) if first_field_id else None
-                if el is None:
-                    raise ValueError(f"Field {first_field_id} not found by ID")
-                driver.execute_script("arguments[0].scrollIntoView(true);", el)
-                driver.execute_script("arguments[0].value = '';", el)
-                el.clear()
-                el.send_keys(str(int(new_price) if new_price == int(new_price) else new_price))
-            except Exception as e:
-                skipped_rows.append({"description": description, "reason": f"Could not fill field: {e}"})
-                _click_cancel_row(driver)
-                continue
-
-            # Click Update to save this row
-            if _click_update_row(driver):
-                updated_rows.append({
-                    "description": description,
-                    "size":        size or "?",
-                    "old_price":   first_field_val,
-                    "new_price":   new_price,
-                    "ok":          True,
-                })
-                _status(f"  ✅ Updated '{description}': {first_field_val} → {new_price}")
-            else:
-                skipped_rows.append({"description": description, "reason": "Could not click Update button"})
-                _click_cancel_row(driver)
 
         shot = driver.get_screenshot_as_png()
-        n_ok   = len(updated_rows)
-        n_skip = len(skipped_rows)
-        msg = f"✅ {n_ok} row(s) updated, {n_skip} row(s) skipped."
-        return {
-            "ok":         n_ok > 0,
-            "message":    msg,
-            "updated":    updated_rows,
-            "skipped":    skipped_rows,
-            "screenshot": shot,
-        }
+        if updated_count == 0:
+            return {"ok": False,
+                    "message": "Matched rows but no updates succeeded — check Edit/Update button structure.",
+                    "screenshot": shot, "matched": matched_info}
+
+        msg = f"✅ {updated_count} row(s) updated on BookABin."
+        if skipped:
+            msg += f"  ⚠ Skipped row(s): {', '.join(skipped)}."
+        return {"ok": True, "message": msg, "screenshot": shot, "matched": matched_info}
 
     except Exception as exc:
         shot = None
         try: shot = driver.get_screenshot_as_png()
         except Exception: pass
-        return {
-            "ok": False, "message": f"Error: {exc}",
-            "updated": updated_rows, "skipped": skipped_rows, "screenshot": shot,
-        }
+        return {"ok": False, "message": f"Error: {exc}", "screenshot": shot, "matched": {}}
     finally:
         if driver:
             try: driver.quit()

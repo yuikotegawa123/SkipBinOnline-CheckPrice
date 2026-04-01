@@ -475,7 +475,11 @@ elif page == "BookABin":
             # Update Price section
             # ---------------------------------------------------------------
             st.subheader("💲 Update Price on BookABin")
-            st.caption("Log in with a saved account to update your supplier rates on rates_manage.aspx.")
+            st.caption(
+                "Logs in with a saved account, finds each bin-size row on the rates page, "
+                "clicks **Edit Row**, sets the first-day-column price to **(search result − 1)**, "
+                "then clicks **Update Row**."
+            )
 
             _accounts = st.session_state.get("bab_accounts", [])
             _acc_labels = [
@@ -483,188 +487,87 @@ elif page == "BookABin":
                 for a in _accounts
             ]
 
-            up_col1, up_col2, up_col3 = st.columns([2, 1, 1])
-            with up_col1:
+            _up_col1, _up_col2 = st.columns([2, 1])
+            with _up_col1:
                 _sel_acc_idx = st.selectbox(
                     "Select Account",
                     options=list(range(len(_acc_labels))),
                     format_func=lambda x: _acc_labels[x],
                     key="bab_up_acc",
                 )
-            with up_col2:
-                st.write("")
-                st.write("")
-                _fetch_rates_btn = st.button("📥 Fetch Current Rates", use_container_width=True, key="bab_fetch_rates")
-            with up_col3:
+            with _up_col2:
                 st.write("")
                 st.write("")
                 _auto_update_btn = st.button(
-                    "🤖 Auto-Update from Search Results",
+                    "💾 Update Price",
                     use_container_width=True,
                     type="primary",
                     key="bab_auto_update",
                 )
 
-            # ── Auto-Update: use bab_results to set Day 1 = price - 1 ──
+            # Build price_map: size → (cheapest numeric price across waste types) - 1
+            # Only include sizes that have at least one real price in the search results
+            _price_map = {}
+            for _wt, _sizes in bab_results.items():
+                for _sz, _pr in _sizes.items():
+                    if isinstance(_pr, (int, float)):
+                        _adj = int(_pr) - 1
+                        if _sz not in _price_map or _adj < _price_map[_sz]:
+                            _price_map[_sz] = _adj
+
+            # Preview table: what will be sent to BookABin
+            if _price_map:
+                _preview_rows = [
+                    {"Bin Size": f"{sz} m³", "Search Price": f"${_pr + 1:,.0f}", "Will Set To": f"${_pr:,.0f}"}
+                    for sz, _pr in sorted(_price_map.items(), key=lambda x: float(x[0]))
+                ]
+                st.dataframe(pd.DataFrame(_preview_rows), use_container_width=True, hide_index=True)
+            else:
+                st.info("Run a search first to populate the price map.")
+
             if _auto_update_btn:
                 _sel = _accounts[_sel_acc_idx]
                 if not _sel.get("supplier_id") or not _sel.get("password"):
-                    st.error("Selected account has no Supplier ID or password set. Go to the Sign In Information tab to add them.")
+                    st.error("Selected account has no Supplier ID or password set. Go to the Sign In Information tab.")
+                elif not _price_map:
+                    st.error("No prices found — run a search first.")
                 else:
-                    _au_done   = threading.Event()
-                    _au_result = {}
+                    _up_done = threading.Event()
+                    _up_result = {}
 
                     def _do_auto_update():
                         r = Bookabin.auto_update_rates(
                             _sel["supplier_id"], _sel["password"],
-                            saved_dod, bab_results,
+                            saved_dod, _price_map,
                         )
-                        _au_result.update(r)
-                        _au_done.set()
+                        _up_result.update(r)
+                        _up_done.set()
 
-                    threading.Thread(target=_do_auto_update, daemon=True).start()
+                    _up_thread = threading.Thread(target=_do_auto_update, daemon=True)
+                    _up_thread.start()
 
-                    with st.spinner(
-                        f"Logging in as {_sel['supplier_id']} and updating Day 1 prices "
-                        f"(search results − 1) for {saved_dod}…"
-                    ):
-                        _au_done.wait()
+                    with st.spinner("Logging in and updating prices on BookABin… (this may take a moment)"):
+                        _up_done.wait()
 
-                    if _au_result.get("ok"):
-                        st.success(_au_result["message"])
+                    if _up_result.get("ok"):
+                        st.success(_up_result["message"])
                     else:
-                        st.error(_au_result["message"])
+                        st.error(_up_result["message"])
 
-                    _upd = _au_result.get("updated", [])
-                    _skp = _au_result.get("skipped", [])
+                    # Show matched rows summary
+                    if _up_result.get("matched"):
+                        _m = _up_result["matched"]
+                        _match_rows = [
+                            {"Row": idx, "Description": v["description"], "Price Set": f"${v['new_price']:,.0f}"}
+                            for idx, v in _m.items()
+                        ]
+                        st.dataframe(pd.DataFrame(_match_rows), use_container_width=True, hide_index=True)
 
-                    if _upd:
-                        import pandas as _pd
-                        st.markdown("**✅ Updated rows:**")
-                        st.dataframe(
-                            _pd.DataFrame(_upd)[["description", "size", "old_price", "new_price"]],
-                            use_container_width=True,
-                        )
-                    if _skp:
-                        import pandas as _pd
-                        with st.expander(f"⚠ {len(_skp)} row(s) skipped"):
-                            st.dataframe(
-                                _pd.DataFrame(_skp)[["description", "reason"]],
-                                use_container_width=True,
-                            )
-                    if _au_result.get("raw"):
-                        st.text_area("Raw page content", _au_result["raw"], height=200)
-                    if _au_result.get("screenshot"):
-                        st.image(_au_result["screenshot"], caption="Page after auto-update", use_container_width=True)
-                    # Clear stale manual fetch cache after auto-update
-                    st.session_state.pop("bab_rates_result", None)
+                    if _up_result.get("raw"):
+                        st.text_area("Raw page content", _up_result["raw"], height=200)
 
-            # ── Manual: Fetch → edit fields → submit ──
-            if _fetch_rates_btn:
-                _sel = _accounts[_sel_acc_idx]
-                if not _sel.get("supplier_id") or not _sel.get("password"):
-                    st.error("Selected account has no Supplier ID or password set. Go to the Sign In Information tab to add them.")
-                else:
-                    with st.spinner(f"Logging in as {_sel['supplier_id']} and fetching rates for {saved_dod}…"):
-                        _rates = Bookabin.get_rates(_sel["supplier_id"], _sel["password"], saved_dod)
-                    st.session_state["bab_rates_result"]  = _rates
-                    st.session_state["bab_rates_acc_idx"] = _sel_acc_idx
-
-            if "bab_rates_result" in st.session_state:
-                _rates = st.session_state["bab_rates_result"]
-
-                if not _rates["ok"]:
-                    st.error(_rates["message"])
-                    if _rates.get("raw"):
-                        st.text(_rates["raw"])
-                else:
-                    st.success(_rates["message"])
-
-                    # Show column headers if available
-                    if _rates.get("headers"):
-                        st.caption("Column headers: " + "  |  ".join(_rates["headers"]))
-
-                    if _rates.get("rows"):
-                        st.markdown("**Edit the values below, then click Update Price.**")
-
-                        # Build an editable dict of field_id -> new value
-                        _edit_updates = {}
-                        for _row in _rates["rows"]:
-                            # Show description + field_order hint
-                            _col_hint = ""
-                            if _rates.get("headers") and _row.get("field_order"):
-                                # Match field_order (input fields only) to headers
-                                # Headers include non-input cols; skip the first (description) header
-                                _data_headers = [h for h in _rates["headers"] if h and h.lower() not in ("edit", "delete", "")]
-                                _field_labels = _data_headers[1:len(_row["field_order"]) + 1] if len(_data_headers) > 1 else []
-                                if _field_labels:
-                                    _col_hint = "  ·  Columns: " + ", ".join(_field_labels)
-                            st.markdown(f"**{_row['description']}**{_col_hint}")
-                            _field_order = _row.get("field_order", list(_row["fields"].keys()))
-                            _fcols = st.columns(min(len(_field_order), 5))
-                            for _ci, _fid in enumerate(_field_order):
-                                _fval = _row["fields"].get(_fid, "")
-                                # Label: use matching header if available, else last segment of ID
-                                _data_headers = [h for h in _rates.get("headers", []) if h and h.lower() not in ("edit", "delete", "")]
-                                _label = (
-                                    _data_headers[_ci + 1]
-                                    if len(_data_headers) > _ci + 1
-                                    else (_fid.split("_")[-1] if "_" in _fid else _fid)
-                                )
-                                with _fcols[_ci % len(_fcols)]:
-                                    _new_val = st.text_input(
-                                        _label,
-                                        value=_fval,
-                                        key=f"bab_rate_field_{_fid}",
-                                    )
-                                    if _new_val != _fval:
-                                        _edit_updates[_fid] = _new_val
-
-                        st.write("")
-                        _up_col1, _up_col2 = st.columns([3, 1])
-                        with _up_col1:
-                            if _edit_updates:
-                                st.info(f"🖊 {len(_edit_updates)} field(s) changed — ready to submit.")
-                            else:
-                                st.caption("No changes made yet.")
-                        with _up_col2:
-                            _submit_rates_btn = st.button(
-                                "💾 Update Price",
-                                use_container_width=True,
-                                type="primary",
-                                key="bab_submit_rates",
-                                disabled=len(_edit_updates) == 0,
-                            )
-
-                        if _submit_rates_btn and _edit_updates:
-                            _sel = _accounts[st.session_state.get("bab_rates_acc_idx", 0)]
-                            _up_done = threading.Event()
-                            _up_result = {}
-
-                            def _do_update():
-                                r = Bookabin.update_rates(
-                                    _sel["supplier_id"], _sel["password"],
-                                    saved_dod, _edit_updates,
-                                )
-                                _up_result.update(r)
-                                _up_done.set()
-
-                            threading.Thread(target=_do_update, daemon=True).start()
-
-                            with st.spinner("Updating prices on BookABin…"):
-                                _up_done.wait()
-
-                            if _up_result.get("ok"):
-                                st.success(_up_result["message"])
-                            else:
-                                st.error(_up_result["message"])
-                            if _up_result.get("screenshot"):
-                                st.image(_up_result["screenshot"], caption="Page after update", use_container_width=True)
-                            # Clear cached rates so next fetch is fresh
-                            st.session_state.pop("bab_rates_result", None)
-
-                    elif _rates.get("raw"):
-                        st.text_area("Raw page content", _rates["raw"], height=200)
+                    if _up_result.get("screenshot"):
+                        st.image(_up_result["screenshot"], caption="Page after update", use_container_width=True)
 
     # -----------------------------------------------------------------------
     # Sub-tab: Sign In Information  (3 saved accounts, passwords locked)
