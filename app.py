@@ -181,7 +181,21 @@ if "bab_results" not in st.session_state:
 # Restore saved accounts — Gist only (no local cache to avoid conflicts)
 if "bab_accounts" not in st.session_state:
     _acc = _gist_load()
-    st.session_state["bab_accounts"] = _acc if isinstance(_acc, list) else list(_DEFAULT_ACCOUNTS)
+    # Normalise: ensure exactly 3 well-formed account dicts regardless of what
+    # the Gist returns (empty list, partial list, wrong types, etc.)
+    if not isinstance(_acc, list):
+        _acc = []
+    _acc = [
+        a if isinstance(a, dict) else {}
+        for a in _acc
+    ]
+    # Pad to 3 entries, fill missing keys with defaults
+    while len(_acc) < 3:
+        _acc.append({})
+    for idx, _default in enumerate(_DEFAULT_ACCOUNTS):
+        for key, val in _default.items():
+            _acc[idx].setdefault(key, val)
+    st.session_state["bab_accounts"] = _acc[:3]
 
 # Per-account unlock flags (which account is currently in edit mode)
 if "bab_acc_unlocked" not in st.session_state:
