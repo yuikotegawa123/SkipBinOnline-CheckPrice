@@ -563,9 +563,9 @@ def update_rates(supplier_id: str, password: str, from_date: str,
     """
     Log in, navigate to rates_manage.aspx.
     For each entry in ``updates`` (row_index -> new_price), click the
-    ``input[@alt='Edit Row']`` button for that row, overwrite the FIRST text
-    input (first-day-column price) with the new value, then click
-    ``input[@alt='Update Row']`` to save that row.
+    ``input[@alt='Edit Row']`` button for that row, overwrite the text input
+    in the column that corresponds to ``from_date`` with the new value,
+    then click ``input[@alt='Update Row']`` to save that row on the website.
 
     updates: { row_index (int): new_price (str|float), ... }
 
@@ -575,7 +575,6 @@ def update_rates(supplier_id: str, password: str, from_date: str,
     import time
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
 
     def _status(msg):
         if status_q:
@@ -596,19 +595,21 @@ def update_rates(supplier_id: str, password: str, from_date: str,
             lambda d: "rates" in d.page_source.lower() or "fromdate" in d.current_url.lower()
         )
 
+        # Find the date column index so we target the correct price input
+        date_col_idx = _find_date_col_index(driver, from_date)
+        input_offset = max(0, date_col_idx - 1) if date_col_idx is not None else 0
+
         updated_count = 0
         skipped = []
 
         for row_idx, new_price in updates.items():
             try:
-                # Re-fetch data rows each iteration
                 data_rows = _get_data_rows(driver)
                 if row_idx >= len(data_rows):
                     skipped.append(str(row_idx))
                     continue
                 tr = data_rows[row_idx]
 
-                # Read description for logging
                 cells = tr.find_elements(By.TAG_NAME, "td")
                 description = cells[0].text.strip() if cells else f"Row {row_idx}"
 
@@ -617,34 +618,25 @@ def update_rates(supplier_id: str, password: str, from_date: str,
                 driver.execute_script("arguments[0].scrollIntoView(true);", edit_btn)
                 driver.execute_script("arguments[0].click();", edit_btn)
                 time.sleep(1)
-                _status(f"Editing row {row_idx}: {description}")
+                _status(f"Editing row {row_idx}: {description} → {new_price}")
 
-                # Find the row now in edit mode (has Update Row button)
                 edit_tr = driver.find_element(
                     By.XPATH,
                     "//tr[.//input[@alt='Update Row' or @title='Update Row' or @value='Update']]"
                 )
 
-                # Fill the FIRST text input — that is the first-day-column price
                 text_inputs = edit_tr.find_elements(By.XPATH, ".//input[@type='text']")
                 if not text_inputs:
-                    # Cancel and skip
-                    try:
-                        cancel_btn = edit_tr.find_element(By.XPATH, _CANCEL_BTN_XPATH)
-                        driver.execute_script("arguments[0].click();", cancel_btn)
-                        time.sleep(0.5)
-                    except Exception:
-                        pass
+                    _cancel_edit(driver, edit_tr)
                     skipped.append(str(row_idx))
                     continue
 
-                first_input = text_inputs[0]
-                driver.execute_script("arguments[0].scrollIntoView(true);", first_input)
-                first_input.clear()
-                first_input.send_keys(str(new_price))
-                _status(f"  → Set first-day price to {new_price}")
+                target_idx = min(input_offset, len(text_inputs) - 1)
+                target_input = text_inputs[target_idx]
+                driver.execute_script("arguments[0].scrollIntoView(true);", target_input)
+                target_input.clear()
+                target_input.send_keys(str(new_price))
 
-                # Click Update Row button
                 update_btn = edit_tr.find_element(By.XPATH, _UPDATE_BTN_XPATH)
                 driver.execute_script("arguments[0].click();", update_btn)
                 time.sleep(1.5)
@@ -652,15 +644,12 @@ def update_rates(supplier_id: str, password: str, from_date: str,
 
             except Exception as row_exc:
                 _status(f"⚠ Row {row_idx} failed: {row_exc}")
-                # Try to cancel any open edit before continuing
                 try:
                     edit_tr_fallback = driver.find_element(
                         By.XPATH,
                         "//tr[.//input[@alt='Update Row' or @title='Update Row' or @value='Update']]"
                     )
-                    cancel_btn = edit_tr_fallback.find_element(By.XPATH, _CANCEL_BTN_XPATH)
-                    driver.execute_script("arguments[0].click();", cancel_btn)
-                    time.sleep(0.5)
+                    _cancel_edit(driver, edit_tr_fallback)
                 except Exception:
                     pass
                 skipped.append(str(row_idx))
@@ -670,7 +659,7 @@ def update_rates(supplier_id: str, password: str, from_date: str,
         if updated_count == 0:
             return {"ok": False, "message": "No rows were updated — check row indices or Edit Row button structure.", "screenshot": shot}
 
-        msg = f"✅ {updated_count} row(s) updated."
+        msg = f"✅ {updated_count} row(s) updated on bookabin.com.au."
         if skipped:
             msg += f"  ⚠ Skipped row(s): {', '.join(skipped)}."
         return {"ok": True, "message": msg, "screenshot": shot}
@@ -686,17 +675,97 @@ def update_rates(supplier_id: str, password: str, from_date: str,
             except Exception: pass
 
 
+def _normalise_date_variants(date_str: str) -> list:
+    """
+    Given a D/MM/YYYY date string, return a list of alternative representations
+    that might appear as column headers on rates_manage.aspx, e.g.:
+        "2/04/2026"  →  ["2/04/2026", "02/04/2026", "2/4/2026",
+                         "02-04-2026", "2-Apr-2026", "02-Apr-2026",
+                         "Apr 2", "Apr 02", "2 Apr 2026", "02 Apr 2026"]
+    """
+    import calendar
+    parts = date_str.strip().split("/")
+    if len(parts) != 3:
+        return [date_str]
+    day, month, year = int(parts[0]), int(parts[1]), int(parts[2])
+    mon_abbr = calendar.month_abbr[month]   # "Apr"
+    variants = [
+        f"{day}/{month:02d}/{year}",
+        f"{day:02d}/{month:02d}/{year}",
+        f"{day}/{month}/{year}",
+        f"{day:02d}-{month:02d}-{year}",
+        f"{day}-{mon_abbr}-{year}",
+        f"{day:02d}-{mon_abbr}-{year}",
+        f"{mon_abbr} {day}",
+        f"{mon_abbr} {day:02d}",
+        f"{day} {mon_abbr} {year}",
+        f"{day:02d} {mon_abbr} {year}",
+        f"{day:02d}/{month:02d}",
+        f"{day}/{month:02d}",
+    ]
+    return variants
+
+
+def _find_date_col_index(driver, from_date: str) -> int | None:
+    """
+    Scan the table header row(s) for a cell whose text contains the from_date.
+    Returns the 0-based <th>/<td> column index of that cell, or None if not found.
+    The first column (description) is index 0; price columns start at index 1.
+    """
+    from selenium.webdriver.common.by import By
+    variants = [v.lower() for v in _normalise_date_variants(from_date)]
+    header_rows = driver.find_elements(By.XPATH, "//tr[.//th]")
+    for hr in header_rows:
+        cells = hr.find_elements(By.XPATH, ".//th | .//td")
+        for col_idx, cell in enumerate(cells):
+            cell_text = cell.text.strip().lower()
+            if any(v in cell_text for v in variants):
+                return col_idx
+    return None
+
+
+def _match_size(description: str, price_map: dict):
+    """
+    Try to match a row description string against the keys in price_map.
+    Keys are size strings like "3", "6", "7.5".
+    Returns the matched price value or None.
+    """
+    desc_lower = description.lower()
+    # Sort keys longest-first so "7.5" is tried before "7"
+    for key in sorted(price_map.keys(), key=lambda k: len(str(k)), reverse=True):
+        key_str = str(key).strip()
+        # Patterns: "3m", "3 m", "3cubic", "3 cubic", "3.0", standalone digit boundary
+        size_patterns = [
+            f"{key_str}m",
+            f"{key_str} m",
+            f"{key_str}cubic",
+            f"{key_str} cubic",
+            f"{key_str}.0 ",
+            f"{key_str}.0m",
+        ]
+        if any(p in desc_lower for p in size_patterns):
+            return price_map[key]
+        # Word-boundary fallback: key surrounded by non-digit chars
+        import re as _re
+        if _re.search(rf'(?<!\d){_re.escape(key_str)}(?!\d)', desc_lower):
+            return price_map[key]
+    return None
+
+
 def auto_update_rates(supplier_id: str, password: str, from_date: str,
                       price_map: dict, status_q=None) -> dict:
     """
-    Automatically update rates on rates_manage.aspx by matching each table row's
-    description to a size/waste-type key in ``price_map``.
+    Log into bookabin.com.au, open rates_manage.aspx?fromdate=<from_date>,
+    and for every data row whose description matches a size key in ``price_map``:
 
-    For each matched row the first-day-column price field is set to:
-        price_map[matched_key]  (already adjusted by the caller, e.g. search_price - 1)
+      1. Find the column header that matches ``from_date``  →  ``date_col_idx``
+      2. Click ``input[@alt='Edit Row']`` on that row
+      3. In the revealed edit row, pick the text input at position
+         ``date_col_idx - 1`` (the first column is the description, not an input)
+      4. Set its value to ``price_map[size]``  (caller already subtracted 1)
+      5. Click ``input[@alt='Update Row']`` to save
 
-    price_map: { "3" -> 299, "6" -> 349, ... }  — key is a size string or
-               waste-type keyword that appears in the row description.
+    price_map: { "3" -> 299, "6" -> 349, ... }
 
     Returns:
         {"ok": True|False, "message": str, "screenshot": bytes|None,
@@ -726,6 +795,19 @@ def auto_update_rates(supplier_id: str, password: str, from_date: str,
             lambda d: "rates" in d.page_source.lower() or "fromdate" in d.current_url.lower()
         )
 
+        # ── Find which column index corresponds to from_date ──────────────
+        date_col_idx = _find_date_col_index(driver, from_date)
+        if date_col_idx is None:
+            # from_date column not found in header → fall back to first price input (index 0)
+            _status("⚠ Date column header not found — will use first text input in each edit row.")
+            input_offset = 0
+        else:
+            # Column 0 is description (no text input), price inputs start at 0 inside edit row
+            # So the Nth column header (1-based price) → input index (date_col_idx - 1)
+            input_offset = max(0, date_col_idx - 1)
+            _status(f"Date column index = {date_col_idx} → edit-row input offset = {input_offset}")
+
+        # ── Scan all data rows for matching sizes ─────────────────────────
         data_rows = _get_data_rows(driver)
         if not data_rows:
             body_text = driver.find_element(By.TAG_NAME, "body").text[:2000]
@@ -735,10 +817,8 @@ def auto_update_rates(supplier_id: str, password: str, from_date: str,
                     "matched": {},
                     "raw": body_text}
 
-        # Build a description → new_price mapping by scanning each row
-        # (without entering edit mode) to read its label, then match against price_map
-        row_updates = {}   # row_idx (int) -> new_price
-        matched_info = {}  # row_idx -> {description, new_price}
+        row_updates  = {}   # row_idx (int) -> new_price
+        matched_info = {}   # row_idx -> {description, new_price}
         num_rows = len(data_rows)
 
         for row_idx in range(num_rows):
@@ -746,30 +826,13 @@ def auto_update_rates(supplier_id: str, password: str, from_date: str,
             if row_idx >= len(data_rows_cur):
                 break
             tr = data_rows_cur[row_idx]
+            # Read all cell text joined for a richer description
             cells = tr.find_elements(By.TAG_NAME, "td")
-            description = cells[0].text.strip() if cells else ""
-            desc_lower = description.lower()
+            description = " ".join(c.text.strip() for c in cells if c.text.strip())
+            if not description:
+                description = f"Row {row_idx}"
 
-            # Match against price_map keys — try exact size match first, then substring
-            matched_price = None
-            for key, price in price_map.items():
-                key_str = str(key).strip()
-                # Size match: "3" matches "3m3", "3 cubic", "3.0 m³" etc.
-                size_patterns = [
-                    f"{key_str}m",
-                    f"{key_str} m",
-                    f"{key_str}cubic",
-                    f"{key_str} cubic",
-                    f"{key_str}.0",
-                ]
-                if any(p in desc_lower for p in size_patterns):
-                    matched_price = price
-                    break
-                # Fallback: key appears literally in description
-                if key_str in desc_lower:
-                    matched_price = price
-                    break
-
+            matched_price = _match_size(description, price_map)
             if matched_price is not None:
                 row_updates[row_idx] = matched_price
                 matched_info[row_idx] = {"description": description, "new_price": matched_price}
@@ -777,17 +840,18 @@ def auto_update_rates(supplier_id: str, password: str, from_date: str,
         if not row_updates:
             shot = driver.get_screenshot_as_png()
             return {"ok": False,
-                    "message": "No rows matched the price map keys — check the description labels on the rates page.",
+                    "message": "No rows matched the price map — check size labels on the rates page.",
                     "screenshot": shot,
                     "matched": matched_info}
 
-        _status(f"Matched {len(row_updates)} rows — updating…")
+        _status(f"Matched {len(row_updates)} rows — updating prices on bookabin.com.au…")
 
-        # Now iterate and update each matched row via Edit Row → fill → Update Row
+        # ── Edit → fill correct date column → Update Row ──────────────────
         updated_count = 0
         skipped = []
 
         for row_idx, new_price in row_updates.items():
+            desc = matched_info[row_idx]["description"]
             try:
                 data_rows_cur = _get_data_rows(driver)
                 if row_idx >= len(data_rows_cur):
@@ -800,47 +864,42 @@ def auto_update_rates(supplier_id: str, password: str, from_date: str,
                 driver.execute_script("arguments[0].scrollIntoView(true);", edit_btn)
                 driver.execute_script("arguments[0].click();", edit_btn)
                 time.sleep(1)
-                _status(f"  Editing row {row_idx}: {matched_info[row_idx]['description']} → {new_price}")
+                _status(f"  Row {row_idx} [{desc}] → {new_price}")
 
-                # Find the row now in edit mode
+                # Row is now in edit mode — find it by Update Row button
                 edit_tr = driver.find_element(
                     By.XPATH,
                     "//tr[.//input[@alt='Update Row' or @title='Update Row' or @value='Update']]"
                 )
 
-                # Fill the FIRST text input (first-day-column price)
+                # All text inputs inside the edit row — pick the one at input_offset
                 text_inputs = edit_tr.find_elements(By.XPATH, ".//input[@type='text']")
                 if not text_inputs:
-                    try:
-                        cancel_btn = edit_tr.find_element(By.XPATH, _CANCEL_BTN_XPATH)
-                        driver.execute_script("arguments[0].click();", cancel_btn)
-                        time.sleep(0.5)
-                    except Exception:
-                        pass
+                    _cancel_edit(driver, edit_tr)
                     skipped.append(str(row_idx))
                     continue
 
-                first_input = text_inputs[0]
-                driver.execute_script("arguments[0].scrollIntoView(true);", first_input)
-                first_input.clear()
-                first_input.send_keys(str(new_price))
+                # Clamp offset to available inputs
+                target_idx = min(input_offset, len(text_inputs) - 1)
+                target_input = text_inputs[target_idx]
+                driver.execute_script("arguments[0].scrollIntoView(true);", target_input)
+                target_input.clear()
+                target_input.send_keys(str(new_price))
 
-                # Click Update Row
+                # Click Update Row to save this row on the website
                 update_btn = edit_tr.find_element(By.XPATH, _UPDATE_BTN_XPATH)
                 driver.execute_script("arguments[0].click();", update_btn)
                 time.sleep(1.5)
                 updated_count += 1
 
             except Exception as row_exc:
-                _status(f"⚠ Row {row_idx} failed: {row_exc}")
+                _status(f"  ⚠ Row {row_idx} failed: {row_exc}")
                 try:
                     edit_tr_fb = driver.find_element(
                         By.XPATH,
                         "//tr[.//input[@alt='Update Row' or @title='Update Row' or @value='Update']]"
                     )
-                    cancel_btn = edit_tr_fb.find_element(By.XPATH, _CANCEL_BTN_XPATH)
-                    driver.execute_script("arguments[0].click();", cancel_btn)
-                    time.sleep(0.5)
+                    _cancel_edit(driver, edit_tr_fb)
                 except Exception:
                     pass
                 skipped.append(str(row_idx))
@@ -849,10 +908,10 @@ def auto_update_rates(supplier_id: str, password: str, from_date: str,
         shot = driver.get_screenshot_as_png()
         if updated_count == 0:
             return {"ok": False,
-                    "message": "Matched rows but no updates succeeded — check Edit/Update button structure.",
+                    "message": "Matched rows but no updates succeeded — Edit/Update buttons may differ.",
                     "screenshot": shot, "matched": matched_info}
 
-        msg = f"✅ {updated_count} row(s) updated on BookABin."
+        msg = f"✅ {updated_count} row(s) updated on bookabin.com.au."
         if skipped:
             msg += f"  ⚠ Skipped row(s): {', '.join(skipped)}."
         return {"ok": True, "message": msg, "screenshot": shot, "matched": matched_info}
@@ -866,6 +925,17 @@ def auto_update_rates(supplier_id: str, password: str, from_date: str,
         if driver:
             try: driver.quit()
             except Exception: pass
+
+
+def _cancel_edit(driver, edit_tr):
+    """Click the Cancel button inside an open edit row, ignoring errors."""
+    try:
+        from selenium.webdriver.common.by import By
+        cancel_btn = edit_tr.find_element(By.XPATH, _CANCEL_BTN_XPATH)
+        driver.execute_script("arguments[0].click();", cancel_btn)
+        import time; time.sleep(0.5)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
