@@ -512,6 +512,8 @@ elif page == "BookABin":
                 if new_id != acc["supplier_id"]:
                     accounts[i]["supplier_id"] = new_id
                     _gist_save(accounts)
+                    st.session_state.pop("bab_accounts", None)  # force fresh Gist fetch on rerun
+                    st.rerun()
 
                 # ── Unlock / change password section ──
                 if not unlocked[i]:
@@ -561,12 +563,14 @@ elif page == "BookABin":
                             _gist_save(accounts)
                             unlocked[i] = False
                             st.session_state["bab_acc_unlocked"] = unlocked
+                            st.session_state.pop("bab_accounts", None)  # force fresh Gist fetch on rerun
                             st.success(f"✅ Password for {acc['label']} saved.")
                             st.rerun()
 
                     if cancel_btn:
                         unlocked[i] = False
                         st.session_state["bab_acc_unlocked"] = unlocked
+                        st.session_state.pop("bab_accounts", None)  # force fresh Gist fetch on rerun
                         st.rerun()
 
 # ===========================================================================
