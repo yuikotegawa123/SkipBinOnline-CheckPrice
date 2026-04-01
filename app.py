@@ -80,6 +80,27 @@ st.title("🗑️ SkipBin Price Checker")
 st.caption("BookABin · BestPriceSkipBins · SkipBinFinder · SkipBinsOnline — one search, four sources")
 
 # ---------------------------------------------------------------------------
+# Sidebar – BookABin Sign In
+# ---------------------------------------------------------------------------
+
+with st.sidebar:
+    st.header("🔑 BookABin Sign In")
+    bab_account = st.text_input("Account (Supplier ID)", key="bab_acc")
+    bab_password = st.text_input("Password", type="password", key="bab_pwd")
+    sign_in_btn = st.button("Sign In", use_container_width=True, type="primary")
+
+    if sign_in_btn:
+        if not bab_account or not bab_password:
+            st.error("Please enter your Supplier ID and password.")
+        else:
+            with st.spinner("Signing in to BookABin…"):
+                ok, msg = Bookabin.login(bab_account, bab_password)
+            if ok:
+                st.success(msg)
+            else:
+                st.error(msg)
+
+# ---------------------------------------------------------------------------
 # Inputs
 # ---------------------------------------------------------------------------
 

@@ -104,6 +104,73 @@ def make_driver(retries=3):
     raise RuntimeError("Could not start Chrome after multiple attempts")
 
 
+def login(username: str, password: str):
+    """
+    Log into https://www.bookabin.com.au/suppliers.aspx.
+    Returns (success: bool, message: str).
+    """
+    import time
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+
+    driver = make_driver()
+    try:
+        driver.get("https://www.bookabin.com.au/suppliers.aspx")
+        wait = WebDriverWait(driver, 15)
+
+        # Wait for the password field to appear
+        pwd_input = wait.until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']"))
+        )
+
+        # The supplier-id field is the visible text/tel/number input closest to
+        # the login section.  Fall back to any visible text input on the page.
+        try:
+            user_input = driver.find_element(
+                By.XPATH,
+                "//input[@type='password']/preceding::input[@type='text' or @type='email' or @type='number'][1]",
+            )
+        except Exception:
+            inputs = driver.find_elements(
+                By.CSS_SELECTOR, "input[type='text'], input[type='email'], input[type='number']"
+            )
+            user_input = inputs[-1] if inputs else None
+
+        if user_input is None:
+            return False, "Could not find the Supplier ID input field on the page."
+
+        user_input.clear()
+        user_input.send_keys(username)
+        pwd_input.clear()
+        pwd_input.send_keys(password)
+
+        # The Log In element is an <a> tag that triggers ASP.NET PostBack
+        login_btn = wait.until(
+            EC.element_to_be_clickable(
+                (By.XPATH, "//*[contains(@id,'btnLogin') or contains(@href,'btnLogin')]")
+            )
+        )
+        driver.execute_script("arguments[0].click();", login_btn)
+
+        time.sleep(3)
+
+        src = driver.page_source.lower()
+        # Success indicators: the page shows logout / welcome / supplier dashboard
+        if any(k in src for k in ("log out", "logout", "sign out", "welcome", "my account")):
+            return True, "Logged in successfully!"
+        # Failure indicators
+        if any(k in src for k in ("invalid", "incorrect", "error", "failed")):
+            return False, "Login failed: invalid credentials."
+        # Unknown — consider it a successful attempt
+        return True, "Login submitted — please verify the result."
+
+    except Exception as exc:
+        return False, f"Error during login: {exc}"
+    finally:
+        driver.quit()
+
+
 def get_all_size_indices(driver, step3_url):
     """
     Load the step-3 page once and return a dict {size_str -> click_index}
