@@ -229,30 +229,123 @@ if page == "Home":
                 st.warning("No data returned from SkipBinsOnline.")
 
 # ===========================================================================
-# PAGE: BookABin Sign In
+# PAGE: BookABin
 # ===========================================================================
 
 elif page == "BookABin":
-    st.title("📦 BookABin — Supplier Sign In")
-    st.markdown("Log in to your BookABin supplier account.")
+    st.title("📦 BookABin")
     st.markdown("---")
 
-    bab_account  = st.text_input("Account (Supplier ID)", key="bab_acc")
-    bab_password = st.text_input("Password", type="password", key="bab_pwd")
-    sign_in_btn  = st.button("Sign In", type="primary")
+    bab_tab_prices, bab_tab_signin = st.tabs(["🔍 Check Price", "🔑 Supplier Sign In"])
 
-    if sign_in_btn:
-        if not bab_account or not bab_password:
-            st.error("Please enter your Supplier ID and password.")
-        else:
-            with st.spinner("Signing in to BookABin…"):
-                ok, msg, screenshot = Bookabin.login(bab_account, bab_password)
-            if ok:
-                st.success(msg)
+    # -----------------------------------------------------------------------
+    # Sub-tab: Check Price (BookABin only)
+    # -----------------------------------------------------------------------
+    with bab_tab_prices:
+        st.subheader("Check Prices — bookabin.com.au")
+        st.caption("Search live prices from BookABin for your postcode and hire period.")
+
+        bab_col1, bab_col2, bab_col3, bab_col4 = st.columns([1, 1.4, 1.4, 1])
+        with bab_col1:
+            bab_postcode = st.text_input("Postcode", value="3173", key="bab_pc")
+        with bab_col2:
+            bab_dod = st.text_input("Delivery Date (D/MM/YYYY)", value="1/04/2026", key="bab_dod")
+        with bab_col3:
+            bab_pud = st.text_input("Pickup Date (D/MM/YYYY)", value="8/04/2026", key="bab_pud")
+        with bab_col4:
+            st.write("")
+            st.write("")
+            bab_search = st.button("🔍 Search BookABin", use_container_width=True, type="primary", key="bab_search")
+
+        if bab_search:
+            if not bab_postcode or not bab_dod or not bab_pud:
+                st.error("Please fill in all fields.")
+                st.stop()
+
+            bab_results: dict = {}
+            bab_lock = threading.Lock()
+
+            def _run_bab(run_fn, *args):
+                cell_q   = queue.Queue()
+                status_q = queue.Queue()
+                done     = threading.Event()
+                threading.Thread(target=run_fn, args=(*args, cell_q, status_q, done), daemon=True).start()
+                done.wait()
+                out = {}
+                while not cell_q.empty():
+                    wt, size, price = cell_q.get_nowait()
+                    out.setdefault(wt, {})[size] = price
+                return out
+
+            with st.spinner("🔍 Fetching prices from BookABin… (this may take a minute)"):
+                bab_results = _run_bab(Bookabin.run_search, bab_postcode, bab_dod, bab_pud)
+
+            if not bab_results:
+                st.warning("No data returned from BookABin. Check the postcode and dates, then try again.")
             else:
-                st.error(msg)
-            if screenshot:
-                st.image(screenshot, caption="Page after login attempt", use_container_width=True)
+                st.success(
+                    f"✅ Done — Postcode **{bab_postcode}**  |  {bab_dod} → {bab_pud}  |  BookABin prices loaded."
+                )
+
+                # --- Cheapest price highlight ---
+                st.subheader("💰 Cheapest Available Price")
+                cheapest_price = None
+                cheapest_wt    = None
+                cheapest_size  = None
+                for wt, sizes in bab_results.items():
+                    for sz, pr in sizes.items():
+                        if isinstance(pr, (int, float)):
+                            if cheapest_price is None or pr < cheapest_price:
+                                cheapest_price = pr
+                                cheapest_wt    = wt
+                                cheapest_size  = sz
+
+                if cheapest_price is not None:
+                    ch_col1, ch_col2, ch_col3 = st.columns(3)
+                    ch_col1.metric("Waste Type",   cheapest_wt)
+                    ch_col2.metric("Bin Size",     f"{cheapest_size} m³")
+                    ch_col3.metric("Best Price",   f"${cheapest_price:,.0f}")
+                else:
+                    st.info("No priced results found for this postcode / date range.")
+
+                st.markdown("---")
+
+                # --- Full data tables ---
+                st.subheader("📋 All Available Sizes")
+                st.dataframe(
+                    _to_df(bab_results, Bookabin.WASTE_TYPES, Bookabin.ALL_SIZES),
+                    use_container_width=True,
+                )
+
+                st.subheader("📋 Full Size Range")
+                st.dataframe(
+                    _to_df(bab_results, Bookabin.WASTE_TYPES, FULL_SIZES),
+                    use_container_width=True,
+                )
+
+    # -----------------------------------------------------------------------
+    # Sub-tab: Supplier Sign In
+    # -----------------------------------------------------------------------
+    with bab_tab_signin:
+        st.subheader("Supplier Sign In — bookabin.com.au")
+        st.markdown("Log in to your BookABin supplier account.")
+
+        bab_account  = st.text_input("Account (Supplier ID)", key="bab_acc")
+        bab_password = st.text_input("Password", type="password", key="bab_pwd")
+        sign_in_btn  = st.button("Sign In", type="primary", key="bab_signin_btn")
+
+        if sign_in_btn:
+            if not bab_account or not bab_password:
+                st.error("Please enter your Supplier ID and password.")
+            else:
+                with st.spinner("Signing in to BookABin…"):
+                    ok, msg, screenshot = Bookabin.login(bab_account, bab_password)
+                if ok:
+                    st.success(msg)
+                else:
+                    st.error(msg)
+                if screenshot:
+                    st.image(screenshot, caption="Page after login attempt", use_container_width=True)
 
 # ===========================================================================
 # PAGE: BestPriceSkipBins Sign In
