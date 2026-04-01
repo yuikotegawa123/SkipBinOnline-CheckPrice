@@ -362,6 +362,213 @@ def run_search(postcode, dod, pud, cell_q, status_q, done_event):
 
 
 # ---------------------------------------------------------------------------
+# Rates management  (supplier portal: rates_manage.aspx)
+# ---------------------------------------------------------------------------
+
+RATES_URL_TPL = "https://www.bookabin.com.au/supplier/rates_manage.aspx?fromdate={date}"
+
+def _login_driver(driver, supplier_id: str, password: str) -> bool:
+    """
+    Log into bookabin.com.au/suppliers.aspx using an existing driver.
+    Returns True if login succeeded, False otherwise.
+    """
+    import time
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+
+    driver.get("https://www.bookabin.com.au/suppliers.aspx")
+    wait = WebDriverWait(driver, 15)
+    try:
+        pwd_input = wait.until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']"))
+        )
+        try:
+            user_input = driver.find_element(
+                By.XPATH,
+                "//input[@type='password']/preceding::input[@type='text' or @type='email' or @type='number'][1]",
+            )
+        except Exception:
+            inputs = driver.find_elements(
+                By.CSS_SELECTOR, "input[type='text'], input[type='email'], input[type='number']"
+            )
+            user_input = inputs[-1] if inputs else None
+
+        if user_input is None:
+            return False
+
+        user_input.clear(); user_input.send_keys(supplier_id)
+        pwd_input.clear();   pwd_input.send_keys(password)
+
+        login_btn = wait.until(
+            EC.element_to_be_clickable(
+                (By.XPATH, "//*[contains(@id,'btnLogin') or contains(@href,'btnLogin')]")
+            )
+        )
+        driver.execute_script("arguments[0].click();", login_btn)
+        time.sleep(3)
+
+        src = driver.page_source.lower()
+        return any(k in src for k in ("log out", "logout", "sign out", "welcome", "my account", "rates_manage", "manage"))
+    except Exception:
+        return False
+
+
+def get_rates(supplier_id: str, password: str, from_date: str) -> dict:
+    """
+    Log in and scrape the current rates table from rates_manage.aspx.
+
+    Returns:
+        {
+            "ok":      True | False,
+            "message": str,
+            "rows": [
+                {
+                    "row_index": int,         # position in the table (0-based)
+                    "description": str,       # bin size / waste type label
+                    "fields": {               # input field id -> current value
+                        "<field_id>": "<value>", ...
+                    }
+                },
+                ...
+            ]
+        }
+    """
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+
+    driver = None
+    try:
+        driver = make_driver()
+        if not _login_driver(driver, supplier_id, password):
+            return {"ok": False, "message": "Login failed — check Supplier ID and password.", "rows": []}
+
+        url = RATES_URL_TPL.format(date=from_date)
+        driver.get(url)
+        WebDriverWait(driver, 15).until(
+            lambda d: "rates" in d.page_source.lower() or "fromdate" in d.current_url.lower()
+        )
+
+        rows = []
+        # Each rate row is typically a <tr> containing text inputs for price fields
+        tr_elems = driver.find_elements(By.XPATH, "//tr[.//input[@type='text']]")
+        for row_idx, tr in enumerate(tr_elems):
+            # Grab the visible text label from the row (bin size / waste type)
+            cells = tr.find_elements(By.TAG_NAME, "td")
+            description = cells[0].text.strip() if cells else f"Row {row_idx}"
+
+            # Collect all text inputs in this row
+            inputs = tr.find_elements(By.XPATH, ".//input[@type='text']")
+            fields = {}
+            for inp in inputs:
+                fid  = inp.get_attribute("id") or inp.get_attribute("name") or f"field_{row_idx}_{len(fields)}"
+                val  = inp.get_attribute("value") or ""
+                fields[fid] = val
+
+            if fields:
+                rows.append({"row_index": row_idx, "description": description, "fields": fields})
+
+        if not rows:
+            # Fallback: page source may show the table differently — return raw text snippet
+            body_text = driver.find_element(By.TAG_NAME, "body").text[:2000]
+            return {"ok": True, "message": "Logged in but no editable rows found. Raw preview below.", "rows": [], "raw": body_text}
+
+        return {"ok": True, "message": f"Loaded {len(rows)} rate rows.", "rows": rows}
+
+    except Exception as exc:
+        return {"ok": False, "message": f"Error: {exc}", "rows": []}
+    finally:
+        if driver:
+            try: driver.quit()
+            except Exception: pass
+
+
+def update_rates(supplier_id: str, password: str, from_date: str,
+                 updates: dict, status_q=None) -> dict:
+    """
+    Log in, navigate to rates_manage.aspx, update price fields, and submit.
+
+    updates: { "<field_id>": "<new_value>", ... }
+             (field IDs come from get_rates() → rows[n]["fields"])
+
+    Returns:
+        {"ok": True|False, "message": str, "screenshot": bytes|None}
+    """
+    import time
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+
+    def _status(msg):
+        if status_q:
+            status_q.put(msg)
+
+    driver = None
+    try:
+        driver = make_driver()
+        _status("Logging in…")
+        if not _login_driver(driver, supplier_id, password):
+            shot = driver.get_screenshot_as_png()
+            return {"ok": False, "message": "Login failed — check Supplier ID and password.", "screenshot": shot}
+
+        url = RATES_URL_TPL.format(date=from_date)
+        _status(f"Loading rates page for {from_date}…")
+        driver.get(url)
+        WebDriverWait(driver, 15).until(
+            lambda d: "rates" in d.page_source.lower() or "fromdate" in d.current_url.lower()
+        )
+
+        # Fill in each updated field
+        updated_count = 0
+        for field_id, new_value in updates.items():
+            try:
+                el = driver.find_element(By.ID, field_id)
+                driver.execute_script("arguments[0].scrollIntoView(true);", el)
+                el.clear()
+                el.send_keys(str(new_value))
+                updated_count += 1
+                _status(f"Updated field {field_id} → {new_value}")
+            except Exception:
+                _status(f"⚠ Could not find field {field_id}, skipping.")
+
+        if updated_count == 0:
+            shot = driver.get_screenshot_as_png()
+            return {"ok": False, "message": "No fields were updated — field IDs may have changed.", "screenshot": shot}
+
+        # Submit the form — look for a Save / Update / Submit button
+        _status("Submitting…")
+        try:
+            submit_btn = driver.find_element(
+                By.XPATH,
+                "//*[contains(@id,'btnSave') or contains(@id,'btnUpdate') or contains(@id,'btnSubmit')"
+                " or contains(@href,'btnSave') or contains(@href,'btnUpdate') or contains(@href,'btnSubmit')]"
+            )
+            driver.execute_script("arguments[0].click();", submit_btn)
+            time.sleep(3)
+        except Exception:
+            # Fall back: submit the first form on the page
+            driver.execute_script("document.forms[0].submit();")
+            time.sleep(3)
+
+        shot = driver.get_screenshot_as_png()
+        src  = driver.page_source.lower()
+        if any(k in src for k in ("saved", "updated", "success", "rates_manage")):
+            return {"ok": True, "message": f"✅ {updated_count} field(s) updated successfully.", "screenshot": shot}
+        return {"ok": True, "message": f"Submitted {updated_count} field(s) — see screenshot to confirm.", "screenshot": shot}
+
+    except Exception as exc:
+        shot = None
+        try: shot = driver.get_screenshot_as_png()
+        except Exception: pass
+        return {"ok": False, "message": f"Error: {exc}", "screenshot": shot}
+    finally:
+        if driver:
+            try: driver.quit()
+            except Exception: pass
+
+
+# ---------------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------------
 

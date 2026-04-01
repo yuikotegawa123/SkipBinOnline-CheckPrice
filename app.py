@@ -469,6 +469,122 @@ elif page == "BookABin":
                 use_container_width=True,
             )
 
+            st.markdown("---")
+
+            # ---------------------------------------------------------------
+            # Update Price section
+            # ---------------------------------------------------------------
+            st.subheader("💲 Update Price on BookABin")
+            st.caption("Log in with a saved account to fetch and update your supplier rates.")
+
+            _accounts = st.session_state.get("bab_accounts", [])
+            _acc_labels = [
+                f"{a.get('label','?')}  (Postcode: {a.get('postcode','?')}  |  ID: {a.get('supplier_id','(not set)')})"
+                for a in _accounts
+            ]
+
+            up_col1, up_col2 = st.columns([2, 1])
+            with up_col1:
+                _sel_acc_idx = st.selectbox(
+                    "Select Account",
+                    options=list(range(len(_acc_labels))),
+                    format_func=lambda x: _acc_labels[x],
+                    key="bab_up_acc",
+                )
+            with up_col2:
+                st.write("")
+                st.write("")
+                _fetch_rates_btn = st.button("📥 Fetch Current Rates", use_container_width=True, key="bab_fetch_rates")
+
+            if _fetch_rates_btn:
+                _sel = _accounts[_sel_acc_idx]
+                if not _sel.get("supplier_id") or not _sel.get("password"):
+                    st.error("Selected account has no Supplier ID or password set. Go to the Sign In Information tab to add them.")
+                else:
+                    with st.spinner(f"Logging in as {_sel['supplier_id']} and fetching rates for {saved_dod}…"):
+                        _rates = Bookabin.get_rates(_sel["supplier_id"], _sel["password"], saved_dod)
+                    st.session_state["bab_rates_result"]  = _rates
+                    st.session_state["bab_rates_acc_idx"] = _sel_acc_idx
+
+            if "bab_rates_result" in st.session_state:
+                _rates = st.session_state["bab_rates_result"]
+
+                if not _rates["ok"]:
+                    st.error(_rates["message"])
+                    if _rates.get("raw"):
+                        st.text(_rates["raw"])
+                else:
+                    st.success(_rates["message"])
+
+                    if _rates.get("rows"):
+                        st.markdown("**Edit the values below, then click Update.**")
+
+                        # Build an editable dict of field_id -> new value
+                        _edit_updates = {}
+                        for _row in _rates["rows"]:
+                            st.markdown(f"**{_row['description']}**")
+                            _fcols = st.columns(min(len(_row["fields"]), 4))
+                            for _ci, (_fid, _fval) in enumerate(_row["fields"].items()):
+                                with _fcols[_ci % len(_fcols)]:
+                                    _new_val = st.text_input(
+                                        _fid.split("_")[-1] if "_" in _fid else _fid,
+                                        value=_fval,
+                                        key=f"bab_rate_field_{_fid}",
+                                    )
+                                    if _new_val != _fval:
+                                        _edit_updates[_fid] = _new_val
+
+                        st.write("")
+                        _up_col1, _up_col2 = st.columns([3, 1])
+                        with _up_col1:
+                            if _edit_updates:
+                                st.info(f"🖊 {len(_edit_updates)} field(s) changed — ready to submit.")
+                            else:
+                                st.caption("No changes made yet.")
+                        with _up_col2:
+                            _submit_rates_btn = st.button(
+                                "💾 Update Rates",
+                                use_container_width=True,
+                                type="primary",
+                                key="bab_submit_rates",
+                                disabled=len(_edit_updates) == 0,
+                            )
+
+                        if _submit_rates_btn and _edit_updates:
+                            _sel = _accounts[st.session_state.get("bab_rates_acc_idx", 0)]
+                            _up_status_q = queue.Queue()
+                            _up_done = threading.Event()
+                            _up_result = {}
+
+                            def _do_update():
+                                r = Bookabin.update_rates(
+                                    _sel["supplier_id"], _sel["password"],
+                                    saved_dod, _edit_updates, _up_status_q,
+                                )
+                                _up_result.update(r)
+                                _up_done.set()
+
+                            _up_thread = threading.Thread(target=_do_update, daemon=True)
+                            _up_thread.start()
+
+                            _up_ph = st.empty()
+                            while not _up_done.is_set():
+                                while not _up_status_q.empty():
+                                    _up_ph.info(_up_status_q.get_nowait())
+                                time.sleep(0.5)
+
+                            if _up_result.get("ok"):
+                                st.success(_up_result["message"])
+                            else:
+                                st.error(_up_result["message"])
+                            if _up_result.get("screenshot"):
+                                st.image(_up_result["screenshot"], caption="Page after update", use_container_width=True)
+                            # Clear cached rates so next fetch is fresh
+                            st.session_state.pop("bab_rates_result", None)
+
+                    elif _rates.get("raw"):
+                        st.text_area("Raw page content", _rates["raw"], height=200)
+
     # -----------------------------------------------------------------------
     # Sub-tab: Sign In Information  (3 saved accounts, passwords locked)
     # -----------------------------------------------------------------------
