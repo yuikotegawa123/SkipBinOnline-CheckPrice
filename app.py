@@ -62,12 +62,15 @@ st.set_page_config(
 if "page" not in st.session_state:
     st.session_state.page = "Home"
 
+def _go_home():
+    st.session_state.page = "Home"
+    st.session_state.supplier_nav = None
+
 with st.sidebar:
     st.title("🗑️ SkipBin Tool")
     st.markdown("---")
 
-    if st.button("🏠  Home", use_container_width=True):
-        st.session_state.page = "Home"
+    st.button("🏠  Home", use_container_width=True, on_click=_go_home)
 
     st.markdown("---")
     st.caption("Suppliers Action")
@@ -78,6 +81,7 @@ with st.sidebar:
         label_visibility="collapsed",
         format_func=lambda x: f"— {x}",
         index=None,
+        key="supplier_nav",
     )
     if supplier_nav:
         st.session_state.page = supplier_nav
