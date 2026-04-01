@@ -59,9 +59,9 @@ _CACHE_DIR     = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cach
 _BAB_CACHE     = os.path.join(_CACHE_DIR, "bab_results.json")
 
 _DEFAULT_ACCOUNTS = [
-    {"label": "Account 1", "supplier_id": "", "password": ""},
-    {"label": "Account 2", "supplier_id": "", "password": ""},
-    {"label": "Account 3", "supplier_id": "", "password": ""},
+    {"label": "Account 1", "supplier_id": "", "password": "", "postcode": "3173"},
+    {"label": "Account 2", "supplier_id": "", "password": "", "postcode": "3130"},
+    {"label": "Account 3", "supplier_id": "", "password": "", "postcode": "3199"},
 ]
 
 def _save_cache(path: str, data: dict) -> None:
@@ -488,17 +488,26 @@ elif page == "BookABin":
 
         for i in range(3):
             acc = accounts[i]
-            with st.expander(f"**{acc['label']}**  —  Supplier ID: `{acc['supplier_id'] or '(not set)'}`", expanded=True):
+            with st.expander(
+                f"**{acc['label']}**  —  Postcode: `{acc.get('postcode') or '(not set)'}`  |  Supplier ID: `{acc['supplier_id'] or '(not set)'}`",
+                expanded=True,
+            ):
 
-                # ── View row: Supplier ID + masked password ──
-                v1, v2 = st.columns([1, 1])
+                # ── View row: Postcode + Supplier ID + masked password ──
+                v1, v2, v3 = st.columns([1, 1, 1])
                 with v1:
+                    new_pc = st.text_input(
+                        "Postcode",
+                        value=acc.get("postcode", ""),
+                        key=f"bab_postcode_{i}",
+                    )
+                with v2:
                     new_id = st.text_input(
                         "Supplier ID",
                         value=acc["supplier_id"],
                         key=f"bab_sid_{i}",
                     )
-                with v2:
+                with v3:
                     # Always show masked placeholder; real value never printed
                     masked = "••••••••" if acc["password"] else "(not set)"
                     st.text_input(
@@ -508,9 +517,15 @@ elif page == "BookABin":
                         key=f"bab_pwd_display_{i}",
                     )
 
-                # Save Supplier ID change immediately (no unlock needed)
+                # Save Postcode or Supplier ID change immediately (no unlock needed)
+                _changed = False
+                if new_pc != acc.get("postcode", ""):
+                    accounts[i]["postcode"] = new_pc
+                    _changed = True
                 if new_id != acc["supplier_id"]:
                     accounts[i]["supplier_id"] = new_id
+                    _changed = True
+                if _changed:
                     _gist_save(accounts)
                     st.session_state.pop("bab_accounts", None)  # force fresh Gist fetch on rerun
                     st.rerun()
