@@ -469,12 +469,6 @@ elif page == "BookABin":
                 use_container_width=True,
             )
 
-            st.subheader("📋 Full Size Range")
-            st.dataframe(
-                _to_df(bab_results, Bookabin.WASTE_TYPES, FULL_SIZES),
-                use_container_width=True,
-            )
-
     # -----------------------------------------------------------------------
     # Sub-tab: Sign In Information  (3 saved accounts, passwords locked)
     # -----------------------------------------------------------------------
