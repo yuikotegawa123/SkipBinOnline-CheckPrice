@@ -57,7 +57,6 @@ def _parse_bpsb_date(d_slash: str) -> str:
 
 _CACHE_DIR     = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
 _BAB_CACHE     = os.path.join(_CACHE_DIR, "bab_results.json")
-_BAB_ACCOUNTS  = os.path.join(_CACHE_DIR, "bab_accounts.json")
 
 _DEFAULT_ACCOUNTS = [
     {"label": "Account 1", "supplier_id": "", "password": ""},
@@ -179,12 +178,9 @@ if "bab_results" not in st.session_state:
         st.session_state["bab_search_dod"] = _cached.get("dod", "")
         st.session_state["bab_search_pud"] = _cached.get("pud", "")
 
-# Restore saved accounts (survives F5)
-# Priority: 1) Gist (cloud)  2) local .cache  3) default empty list
+# Restore saved accounts — Gist only (no local cache to avoid conflicts)
 if "bab_accounts" not in st.session_state:
-    _acc = _gist_load()                                        # try cloud first
-    if not _acc:
-        _acc = _load_cache(_BAB_ACCOUNTS)                      # fall back to disk
+    _acc = _gist_load()
     st.session_state["bab_accounts"] = _acc if isinstance(_acc, list) else list(_DEFAULT_ACCOUNTS)
 
 # Per-account unlock flags (which account is currently in edit mode)
@@ -501,7 +497,6 @@ elif page == "BookABin":
                 # Save Supplier ID change immediately (no unlock needed)
                 if new_id != acc["supplier_id"]:
                     accounts[i]["supplier_id"] = new_id
-                    _save_cache(_BAB_ACCOUNTS, accounts)
                     _gist_save(accounts)
 
                 # ── Unlock / change password section ──
@@ -549,7 +544,6 @@ elif page == "BookABin":
                             st.error("❌ Passwords do not match.")
                         else:
                             accounts[i]["password"] = new_pwd
-                            _save_cache(_BAB_ACCOUNTS, accounts)
                             _gist_save(accounts)
                             unlocked[i] = False
                             st.session_state["bab_acc_unlocked"] = unlocked
