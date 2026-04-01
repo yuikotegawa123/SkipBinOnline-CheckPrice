@@ -59,20 +59,30 @@ st.set_page_config(
 # Sidebar – Navigation
 # ---------------------------------------------------------------------------
 
+if "page" not in st.session_state:
+    st.session_state.page = "Home"
+
 with st.sidebar:
     st.title("🗑️ SkipBin Tool")
     st.markdown("---")
-    page = st.radio(
-        "Navigation",
-        options=["Home", "BookABin", "BestPriceSkipBins", "SkipBinFinder", "SkipBinsOnline"],
-        label_visibility="collapsed",
-        format_func=lambda x: (
-            "🏠  Home" if x == "Home"
-            else f"— {x}"
-        ),
-    )
+
+    if st.button("🏠  Home", use_container_width=True):
+        st.session_state.page = "Home"
+
     st.markdown("---")
     st.caption("Suppliers Action")
+
+    supplier_nav = st.radio(
+        "supplier_nav",
+        options=["BookABin", "BestPriceSkipBins", "SkipBinFinder", "SkipBinsOnline"],
+        label_visibility="collapsed",
+        format_func=lambda x: f"— {x}",
+        index=None,
+    )
+    if supplier_nav:
+        st.session_state.page = supplier_nav
+
+page = st.session_state.page
 
 # ===========================================================================
 # PAGE: Home
