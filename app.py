@@ -500,7 +500,32 @@ elif page == "BookABin":
                     {"Bin Size": f"{sz} m³", "Search Price": f"${_raw:,.0f}", "Will Set To": f"${_adj:,.0f}"}
                     for sz, (_raw, _adj) in sorted(_price_map.items(), key=lambda x: float(x[0]))
                 ]
-                st.dataframe(pd.DataFrame(_preview_rows), use_container_width=True, hide_index=True)
+                _df_preview = pd.DataFrame(_preview_rows)
+                st.dataframe(_df_preview, use_container_width=True, hide_index=True)
+
+                # Copy / Download buttons
+                _copy_col, _dl_col = st.columns([1, 1])
+                with _copy_col:
+                    _csv_text = _df_preview.to_csv(index=False)
+                    st.download_button(
+                        "📋 Download as CSV",
+                        data=_csv_text,
+                        file_name="update_price.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="bab_dl_csv",
+                    )
+                with _dl_col:
+                    _tsv_text = "\t".join(_df_preview.columns) + "\n" + "\n".join(
+                        "\t".join(str(v) for v in row) for row in _df_preview.itertuples(index=False)
+                    )
+                    _copy_js = f"""
+                    <textarea id="_cp_buf" style="position:absolute;left:-9999px">{_tsv_text}</textarea>
+                    <button onclick="var t=document.getElementById('_cp_buf');t.select();document.execCommand('copy');this.innerText='✅ Copied!';"
+                        style="width:100%;padding:0.4rem 0.8rem;background:#ff4b4b;color:white;border:none;border-radius:4px;cursor:pointer;font-size:0.9rem;">
+                        📋 Copy to Clipboard
+                    </button>"""
+                    st.components.v1.html(_copy_js, height=42)
             else:
                 st.info("Run a search first to populate the price map.")
 
