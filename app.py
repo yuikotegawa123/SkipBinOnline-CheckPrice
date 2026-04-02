@@ -474,100 +474,35 @@ elif page == "BookABin":
             # ---------------------------------------------------------------
             # Update Price section
             # ---------------------------------------------------------------
-            st.subheader("💲 Update Price on BookABin")
-            st.caption(
-                "Logs in with a saved account, finds each bin-size row on the rates page, "
-                "clicks **Edit Row**, sets the first-day-column price to **(search result − 1)**, "
-                "then clicks **Update Row**."
-            )
+            st.subheader("💲 Update Price")
+            st.caption("Rule: bin sizes **≤ 7.5 m³** → price − 1  |  bin sizes **> 7.5 m³** → price unchanged")
 
-            _accounts = st.session_state.get("bab_accounts", [])
-            _acc_labels = [
-                f"{a.get('label','?')}  (Postcode: {a.get('postcode','?')}  |  ID: {a.get('supplier_id','(not set)')})"
-                for a in _accounts
-            ]
-
-            _up_col1, _up_col2 = st.columns([2, 1])
-            with _up_col1:
-                _sel_acc_idx = st.selectbox(
-                    "Select Account",
-                    options=list(range(len(_acc_labels))),
-                    format_func=lambda x: _acc_labels[x],
-                    key="bab_up_acc",
-                )
-            with _up_col2:
-                st.write("")
-                st.write("")
-                _auto_update_btn = st.button(
-                    "💾 Update Price",
-                    use_container_width=True,
-                    type="primary",
-                    key="bab_auto_update",
-                )
-
-            # Build price_map: size → (cheapest numeric price across waste types) - 1
-            # Only include sizes that have at least one real price in the search results
-            _price_map = {}
+            # Build price_map: size → adjusted price
+            # Rule: sizes <= 7.5 m³ → price - 1; sizes > 7.5 m³ → unchanged
+            _price_map = {}   # size → (search_price, will_set_to)
             for _wt, _sizes in bab_results.items():
                 for _sz, _pr in _sizes.items():
                     if isinstance(_pr, (int, float)):
-                        _adj = int(_pr) - 1
-                        if _sz not in _price_map or _adj < _price_map[_sz]:
-                            _price_map[_sz] = _adj
+                        _raw = int(_pr)
+                        try:
+                            _sz_f = float(_sz)
+                        except (ValueError, TypeError):
+                            _sz_f = 0.0
+                        if _sz_f <= 7.5:
+                            _adj = _raw - 1
+                        else:
+                            _adj = _raw
+                        if _sz not in _price_map or _adj < _price_map[_sz][1]:
+                            _price_map[_sz] = (_raw, _adj)
 
-            # Preview table: what will be sent to BookABin
             if _price_map:
                 _preview_rows = [
-                    {"Bin Size": f"{sz} m³", "Search Price": f"${_pr + 1:,.0f}", "Will Set To": f"${_pr:,.0f}"}
-                    for sz, _pr in sorted(_price_map.items(), key=lambda x: float(x[0]))
+                    {"Bin Size": f"{sz} m³", "Search Price": f"${_raw:,.0f}", "Will Set To": f"${_adj:,.0f}"}
+                    for sz, (_raw, _adj) in sorted(_price_map.items(), key=lambda x: float(x[0]))
                 ]
                 st.dataframe(pd.DataFrame(_preview_rows), use_container_width=True, hide_index=True)
             else:
                 st.info("Run a search first to populate the price map.")
-
-            if _auto_update_btn:
-                _sel = _accounts[_sel_acc_idx]
-                if not _sel.get("supplier_id") or not _sel.get("password"):
-                    st.error("Selected account has no Supplier ID or password set. Go to the Sign In Information tab.")
-                elif not _price_map:
-                    st.error("No prices found — run a search first.")
-                else:
-                    _up_done = threading.Event()
-                    _up_result = {}
-
-                    def _do_auto_update():
-                        r = Bookabin.auto_update_rates(
-                            _sel["supplier_id"], _sel["password"],
-                            saved_dod, _price_map,
-                        )
-                        _up_result.update(r)
-                        _up_done.set()
-
-                    _up_thread = threading.Thread(target=_do_auto_update, daemon=True)
-                    _up_thread.start()
-
-                    with st.spinner("Logging in and updating prices on BookABin… (this may take a moment)"):
-                        _up_done.wait()
-
-                    if _up_result.get("ok"):
-                        st.success(_up_result["message"])
-                    else:
-                        st.error(_up_result["message"])
-
-                    # Show matched rows summary
-                    if _up_result.get("matched"):
-                        _m = _up_result["matched"]
-                        _match_rows = [
-                            {"Row": idx, "Description": v["description"], "Price Set": f"${v['new_price']:,.0f}"}
-                            for idx, v in _m.items()
-                        ]
-                        st.dataframe(pd.DataFrame(_match_rows), use_container_width=True, hide_index=True)
-
-                    if _up_result.get("raw"):
-                        st.text_area("Raw page content", _up_result["raw"], height=200)
-
-                    if _up_result.get("screenshot"):
-                        st.image(_up_result["screenshot"], caption="Page after update", use_container_width=True)
 
     # -----------------------------------------------------------------------
     # Sub-tab: Sign In Information  (3 saved accounts, passwords locked)
