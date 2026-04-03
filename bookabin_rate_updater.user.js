@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         BookABin Rate Updater
 // @namespace    bookabin-rate-updater
-// @version      6.2
+// @version      6.3
 // @description  Auto-navigates per waste type using pasted Update Price table
 // @match        *://*.bookabin.com.au/*
 // @run-at       document-end
@@ -62,12 +62,19 @@
         }, 15000);
     }
 
+    // Selector for any edit-like button/link
+    function findEditBtn(row) {
+        return row.querySelector(
+            'input[type="image"][src*="edit" i], input[type="image"][alt*="edit" i], input[type="image"][title*="edit" i], ' +
+            'a[title*="edit" i], button[title*="edit" i], img[src*="edit" i][onclick], input[type="image"]'
+        );
+    }
+
     // Find the row that contains the Edit button for a given size.
     function findRowForSize(sz) {
         var szPat = new RegExp('(?<![\\d.])' + sz.toString().replace('.', '\\.') + '(?![\\d.])', 'i');
         var rows = getAllTableRows();
 
-        // Debug: log first time
         if (rows.length === 0) {
             log('  [debug] No table rows found on page!', '#fab387');
             return null;
@@ -76,21 +83,19 @@
         for (var i = 0; i < rows.length; i++) {
             var txt = rows[i].innerText.replace(/\s+/g, ' ').trim();
             if (!szPat.test(txt)) continue;
-            // Check this row and adjacent rows for Edit button
-            var candidates = [rows[i]];
-            if (i > 0) candidates.push(rows[i - 1]);
-            if (i < rows.length - 1) candidates.push(rows[i + 1]);
-            for (var c = 0; c < candidates.length; c++) {
-                var btn = candidates[c].querySelector('input[type="image"][src*="edit"], input[alt="Edit Row"], input[title="Edit Row"], a[title="Edit"], button[title="Edit"]');
-                if (btn) return candidates[c];
+            // Check this row and up to 4 following rows (Price row + Stock row structure)
+            var limit = Math.min(rows.length - 1, i + 4);
+            for (var j = i; j <= limit; j++) {
+                var btn = findEditBtn(rows[j]);
+                if (btn) return rows[j];
             }
-            // Row matched size but no Edit button nearby — return the matching row anyway
-            // (editBtn check in caller will log a better error)
+            // Nothing found nearby — log and return size row for caller to diagnose
+            log('  [debug] sz=' + sz + ' row found but no edit btn in rows ' + i + '-' + limit + '. Row HTML: ' + rows[i].innerHTML.substring(0, 300), '#fab387');
             return rows[i];
         }
 
         // Log sample rows to help diagnose
-        var sample = rows.slice(0, Math.min(3, rows.length)).map(function(r) { return '"' + r.innerText.replace(/\s+/g, ' ').trim().substring(0, 80) + '"'; }).join(' | ');
+        var sample = rows.slice(0, Math.min(5, rows.length)).map(function(r) { return '"' + r.innerText.replace(/\s+/g, ' ').trim().substring(0, 80) + '"'; }).join(' | ');
         log('  [debug] sz=' + sz + ' not found. Sample rows: ' + sample, '#fab387');
         return null;
     }
@@ -157,7 +162,7 @@
             var row = findRowForSize(sz);
             if (!row) { log('  ' + sz + 'm3: row not found - skipping.', '#f38ba8'); continue; }
 
-            var editBtn = row.querySelector('input[type="image"][src*="edit"], input[alt="Edit Row"], input[title="Edit Row"], a[title="Edit"], button[title="Edit"]');
+            var editBtn = findEditBtn(row);
             if (!editBtn) {
                 // Log what's actually in this row to help diagnose
                 log('  ' + sz + 'm3: Edit button not found. Row HTML: ' + row.innerHTML.substring(0, 200), '#f38ba8');
