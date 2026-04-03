@@ -519,11 +519,22 @@ elif page == "BookABin":
                         key="bab_dl_csv",
                     )
                 with _dl_col:
-                    # Build JSON: { "wasteType": { "size": price, ... }, ... }
+                    # Build JSON: { "wasteType": { "_url": "...", "size": price, ... }, ... }
                     import json as _json
+                    import urllib.parse as _urlparse
+                    _waste_urls = {
+                        'General Waste':       'https://www.bookabin.com.au/supplier/rates_manage.aspx',
+                        'Mixed Heavy Waste':   'https://www.bookabin.com.au/supplier/rates_manage_mixedheavy.aspx',
+                        'Cleanfill/Hardfill':  'https://www.bookabin.com.au/supplier/rates_manage_clean.aspx',
+                        'Green Garden Waste':  'https://www.bookabin.com.au/supplier/rates_manage_green.aspx',
+                        'Soil / Dirt':         'https://www.bookabin.com.au/supplier/rates_manage_dirt.aspx',
+                    }
                     _json_data = {}
                     for _wt2 in _update_wts:
                         _json_data[_wt2] = {}
+                        _base_url = _waste_urls.get(_wt2, '')
+                        if _base_url and bab_dod:
+                            _json_data[_wt2]['_url'] = _base_url + '?fromdate=' + _urlparse.quote(bab_dod, safe='')
                         for _sz2 in _update_szs:
                             _val2 = _price_map.get((_wt2, _sz2))
                             if _val2 is not None:

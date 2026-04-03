@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         BookABin Rate Updater
 // @namespace    bookabin-rate-updater
-// @version      6.0
+// @version      6.1
 // @description  Auto-navigates per waste type using pasted Update Price table
 // @match        *://*.bookabin.com.au/*
 // @run-at       document-end
@@ -108,10 +108,11 @@
             if (!order.length) return null;
             return order.map(function(wt) {
                 var sizes = data[wt];
-                var items = Object.keys(sizes).map(function(sz) {
+                var url   = sizes['_url'] || null;
+                var items = Object.keys(sizes).filter(function(k) { return k !== '_url'; }).map(function(sz) {
                     return { size: sz, price: parseInt(sizes[sz], 10) };
                 }).filter(function(it) { return !isNaN(it.price); });
-                return { wasteType: wt, items: items };
+                return { wasteType: wt, url: url, items: items };
             });
         } catch(e) {
             return null;
@@ -238,14 +239,14 @@
         gi++;
 
         if (!stopFlag && gi < groups.length) {
-            // Navigate to next waste type
-            var nextWt   = groups[gi].wasteType;
-            var nextBase = WASTE_URLS[nextWt];
-            if (!nextBase) {
+            // Navigate to next waste type — prefer _url from JSON, fall back to WASTE_URLS
+            var nextGroup = groups[gi];
+            var nextWt    = nextGroup.wasteType;
+            var nextUrl   = nextGroup.url || (WASTE_URLS[nextWt] ? WASTE_URLS[nextWt] + (st.date ? '?fromdate=' + encodeURIComponent(st.date) : '') : null);
+            if (!nextUrl) {
                 log('No URL for: ' + nextWt + ' - skipping.', '#f38ba8');
                 st.groupIdx = gi + 1;
             } else {
-                var nextUrl = nextBase + (st.date ? '?fromdate=' + encodeURIComponent(st.date) : '');
                 st.groupIdx = gi;
                 saveState(st);
                 log('Navigating to ' + nextWt + '...', '#89b4fa');
@@ -385,16 +386,16 @@
                 return;
             }
             var dateVal  = (document.getElementById('bb-date') || {}).value || '';
-            var firstWt  = groups[0].wasteType;
-            var firstBase = WASTE_URLS[firstWt];
-            if (!firstBase) {
+            var firstGroup = groups[0];
+            var firstWt   = firstGroup.wasteType;
+            var firstUrl  = firstGroup.url || (WASTE_URLS[firstWt] ? WASTE_URLS[firstWt] + (dateVal ? '?fromdate=' + encodeURIComponent(dateVal) : '') : null);
+            if (!firstUrl) {
                 logDiv.innerHTML = '<div style="color:#f38ba8">No URL mapping for: ' + firstWt + '</div>';
                 logDiv.style.display = '';
                 return;
             }
             var st = { date: dateVal, groups: groups, groupIdx: 0, logs: [] };
             saveState(st);
-            var firstUrl = firstBase + (dateVal ? '?fromdate=' + encodeURIComponent(dateVal) : '');
             logDiv.innerHTML = ''; logDiv.style.display = '';
             log('Starting... navigating to ' + firstWt + '...');
             setTimeout(function() { window.location.href = firstUrl; }, 700);
