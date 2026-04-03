@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         BookABin Rate Updater
 // @namespace    bookabin-rate-updater
-// @version      6.1
+// @version      6.2
 // @description  Auto-navigates per waste type using pasted Update Price table
 // @match        *://*.bookabin.com.au/*
 // @run-at       document-end
@@ -183,7 +183,7 @@
             }
 
             var priceInput = document.evaluate(
-                './/td[@class="ratecelledit"][4]/input',
+                './/td[@class="ratecelledit"][1]/input',
                 editTr, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null
             ).singleNodeValue;
 
