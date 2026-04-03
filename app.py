@@ -521,15 +521,21 @@ elif page == "BookABin":
                         key="bab_dl_csv",
                     )
                 with _dl_col:
-                    _tsv_text = "Waste Type\t" + "\t".join(_df_preview.columns) + "\n" + "\n".join(
-                        idx + "\t" + "\t".join(str(v) for v in row)
-                        for idx, row in zip(_df_preview.index, _df_preview.itertuples(index=False))
-                    )
+                    # Build JSON: { "wasteType": { "size": price, ... }, ... }
+                    import json as _json
+                    _json_data = {}
+                    for _wt2 in _update_wts:
+                        _json_data[_wt2] = {}
+                        for _sz2 in _update_szs:
+                            _val2 = _price_map.get((_wt2, _sz2))
+                            if _val2 is not None:
+                                _json_data[_wt2][_sz2] = _val2
+                    _json_text = _json.dumps(_json_data, indent=2)
                     _copy_js = f"""
-                    <textarea id="_cp_buf" style="position:absolute;left:-9999px">{_tsv_text}</textarea>
+                    <textarea id="_cp_buf" style="position:absolute;left:-9999px">{_json_text}</textarea>
                     <button onclick="var t=document.getElementById('_cp_buf');t.select();document.execCommand('copy');this.innerText='✅ Copied!';"
                         style="width:100%;padding:0.4rem 0.8rem;background:#ff4b4b;color:white;border:none;border-radius:4px;cursor:pointer;font-size:0.9rem;">
-                        📋 Copy to Clipboard
+                        📋 Copy as JSON
                     </button>"""
                     st.components.v1.html(_copy_js, height=42)
             else:

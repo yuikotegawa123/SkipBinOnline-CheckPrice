@@ -96,32 +96,26 @@
     }
 
     // ── Paste Parser ─────────────────────────────────────────────────────────
-    // Expects TSV from Streamlit Copy to Clipboard:
-    //   Waste Type\t2 m3\t3 m3\t...
-    //   General Waste\t$208\t$298\t...
+    // Accepts JSON copied from Streamlit "Copy as JSON":
+    //   { "General Waste": { "2": 208, "3": 298, ... }, ... }
 
     function parsePaste(text) {
-        var lines = text.trim().split(/\r?\n/);
-        if (lines.length < 2) return null;
-        var headers = lines[0].split('\t');
-        var sizes = headers.slice(1).map(function(h) {
-            return h.replace(/\s*m.*/i, '').trim();
-        });
-        var map = {}, order = [];
-        for (var i = 1; i < lines.length; i++) {
-            var cols = lines[i].split('\t');
-            var wt = cols[0].trim();
-            if (!wt) continue;
-            if (!map[wt]) { map[wt] = []; order.push(wt); }
-            for (var j = 0; j < sizes.length; j++) {
-                var cell = (cols[j + 1] || '').trim();
-                if (!cell || cell === 'N/A' || cell === '-') continue;
-                var pr = parseInt(cell.replace(/[$,]/g, ''), 10);
-                if (!isNaN(pr)) map[wt].push({ size: sizes[j], price: pr });
-            }
+        text = text.trim();
+        if (!text) return null;
+        try {
+            var data = JSON.parse(text);
+            var order = Object.keys(data);
+            if (!order.length) return null;
+            return order.map(function(wt) {
+                var sizes = data[wt];
+                var items = Object.keys(sizes).map(function(sz) {
+                    return { size: sz, price: parseInt(sizes[sz], 10) };
+                }).filter(function(it) { return !isNaN(it.price); });
+                return { wasteType: wt, items: items };
+            });
+        } catch(e) {
+            return null;
         }
-        if (!order.length) return null;
-        return order.map(function(wt) { return { wasteType: wt, items: map[wt] }; });
     }
 
     // ── SessionStorage state ──────────────────────────────────────────────────
