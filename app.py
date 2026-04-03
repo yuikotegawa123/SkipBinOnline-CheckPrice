@@ -475,10 +475,10 @@ elif page == "BookABin":
             # Update Price section
             # ---------------------------------------------------------------
             st.subheader("💲 Update Price")
-            st.caption("Rule: all available bin sizes → price − 1  |  bin sizes **> 7.5 m³** excluded")
+            st.caption("Rule: bin sizes **≤ 7.5 m³** → price − 1  |  bin sizes **> 7.5 m³** → unchanged")
 
             # Build price_map: (waste_type, size) → will_set_to
-            # Rule: sizes <= 7.5 m³ → price - 1; sizes > 7.5 m³ → excluded
+            # Rule: sizes <= 7.5 m³ → price - 1; sizes > 7.5 m³ → same price
             _price_map = {}   # (wt, sz) → will_set_to
             for _wt, _sizes in bab_results.items():
                 for _sz, _pr in _sizes.items():
@@ -487,9 +487,7 @@ elif page == "BookABin":
                             _sz_f = float(_sz)
                         except (ValueError, TypeError):
                             _sz_f = 0.0
-                        if _sz_f > 7.5:
-                            continue
-                        _adj = int(_pr) - 1
+                        _adj = int(_pr) - 1 if _sz_f <= 7.5 else int(_pr)
                         _key = (_wt, _sz)
                         if _key not in _price_map or _adj < _price_map[_key]:
                             _price_map[_key] = _adj
@@ -497,7 +495,7 @@ elif page == "BookABin":
             if _price_map:
                 # Ordered waste types and sizes matching All Available Sizes table
                 _update_wts  = [wt for wt in Bookabin.WASTE_TYPES if any(k[0] == wt for k in _price_map)]
-                _update_szs  = [sz for sz in Bookabin.ALL_SIZES if float(sz) <= 7.5 and any(k[1] == sz for k in _price_map)]
+                _update_szs  = [sz for sz in Bookabin.ALL_SIZES if any(k[1] == sz for k in _price_map)]
                 _preview_rows = []
                 for _wt in _update_wts:
                     _row = {"Waste Type": _wt}
