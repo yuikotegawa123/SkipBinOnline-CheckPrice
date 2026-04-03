@@ -477,36 +477,41 @@ elif page == "BookABin":
             st.subheader("💲 Update Price")
             st.caption("Rule: all available bin sizes → price − 1  |  bin sizes **> 7.5 m³** excluded")
 
-            # Build price_map: (waste_type, size) → (search_price, will_set_to)
+            # Build price_map: (waste_type, size) → will_set_to
             # Rule: sizes <= 7.5 m³ → price - 1; sizes > 7.5 m³ → excluded
-            _price_map = {}   # (wt, sz) → (search_price, will_set_to)
+            _price_map = {}   # (wt, sz) → will_set_to
             for _wt, _sizes in bab_results.items():
                 for _sz, _pr in _sizes.items():
                     if isinstance(_pr, (int, float)):
-                        _raw = int(_pr)
                         try:
                             _sz_f = float(_sz)
                         except (ValueError, TypeError):
                             _sz_f = 0.0
                         if _sz_f > 7.5:
                             continue
-                        _adj = _raw - 1
+                        _adj = int(_pr) - 1
                         _key = (_wt, _sz)
-                        if _key not in _price_map or _adj < _price_map[_key][1]:
-                            _price_map[_key] = (_raw, _adj)
+                        if _key not in _price_map or _adj < _price_map[_key]:
+                            _price_map[_key] = _adj
 
             if _price_map:
-                _preview_rows = [
-                    {"Waste Type": wt, "Bin Size": f"{sz} m³", "Search Price": f"${_raw:,.0f}", "Will Set To": f"${_adj:,.0f}"}
-                    for (wt, sz), (_raw, _adj) in sorted(_price_map.items(), key=lambda x: (x[0][0], float(x[0][1])))
-                ]
-                _df_preview = pd.DataFrame(_preview_rows)
-                st.dataframe(_df_preview, use_container_width=True, hide_index=True)
+                # Ordered waste types and sizes matching All Available Sizes table
+                _update_wts  = [wt for wt in Bookabin.WASTE_TYPES if any(k[0] == wt for k in _price_map)]
+                _update_szs  = [sz for sz in Bookabin.ALL_SIZES if float(sz) <= 7.5 and any(k[1] == sz for k in _price_map)]
+                _preview_rows = []
+                for _wt in _update_wts:
+                    _row = {"Waste Type": _wt}
+                    for _sz in _update_szs:
+                        _val = _price_map.get((_wt, _sz))
+                        _row[f"{_sz} m³"] = f"${_val:,.0f}" if _val is not None else "N/A"
+                    _preview_rows.append(_row)
+                _df_preview = pd.DataFrame(_preview_rows).set_index("Waste Type")
+                st.dataframe(_df_preview, use_container_width=True)
 
                 # Copy / Download buttons
                 _copy_col, _dl_col = st.columns([1, 1])
                 with _copy_col:
-                    _csv_text = _df_preview.to_csv(index=False)
+                    _csv_text = _df_preview.to_csv(index=True)
                     st.download_button(
                         "📋 Download as CSV",
                         data=_csv_text,
@@ -516,8 +521,9 @@ elif page == "BookABin":
                         key="bab_dl_csv",
                     )
                 with _dl_col:
-                    _tsv_text = "\t".join(_df_preview.columns) + "\n" + "\n".join(
-                        "\t".join(str(v) for v in row) for row in _df_preview.itertuples(index=False)
+                    _tsv_text = "Waste Type\t" + "\t".join(_df_preview.columns) + "\n" + "\n".join(
+                        idx + "\t" + "\t".join(str(v) for v in row)
+                        for idx, row in zip(_df_preview.index, _df_preview.itertuples(index=False))
                     )
                     _copy_js = f"""
                     <textarea id="_cp_buf" style="position:absolute;left:-9999px">{_tsv_text}</textarea>
