@@ -1,145 +1,144 @@
-// ==UserScript==
+﻿// ==UserScript==
 // @name         BookABin Rate Updater
 // @namespace    bookabin-rate-updater
-// @version      1.3
-// @description  Auto-fill rates on BookABin rates management page
+// @version      3.0
+// @description  Table UI to set prices on BookABin rates management page
 // @match        *://*.bookabin.com.au/*
 // @run-at       document-end
 // @grant        none
 // ==/UserScript==
 
 (function () {
-    if (window.location.href.toLowerCase().indexOf('rates_manage') === -1) return;
-    console.log('[RateUpdater] active on: ' + window.location.href);
+    var BIN_SIZES = ['2','3','4','4.5','6','7.5','9','11','15','30'];
+    var stopFlag = false;
 
-    var SESSION_KEY = 'bb_rate_queue';
+    function wait(ms) { return new Promise(function(r){ setTimeout(r, ms); }); }
 
-    function parseTable(text) {
-        var lines = text.trim().split('\n').filter(function(l) { return l.trim(); });
-        if (lines.length < 2) return null;
-        var headers = lines[0].split('\t').map(function(h) { return h.trim().toLowerCase(); });
-        var sizeIdx = -1, priceIdx = -1;
-        for (var h = 0; h < headers.length; h++) {
-            if (headers[h].indexOf('bin size') !== -1) sizeIdx = h;
-            if (headers[h].indexOf('will set to') !== -1) priceIdx = h;
-        }
-        if (sizeIdx === -1 || priceIdx === -1) return null;
-        var map = {};
-        for (var i = 1; i < lines.length; i++) {
-            var cols = lines[i].split('\t');
-            if (cols.length <= Math.max(sizeIdx, priceIdx)) continue;
-            var sz = cols[sizeIdx].trim().replace(/\s*m.*/i, '').trim();
-            var pr = parseInt(cols[priceIdx].replace(/[$,]/g, '').trim(), 10);
-            if (sz && !isNaN(pr)) map[sz] = pr;
-        }
-        return Object.keys(map).length ? map : null;
-    }
-
-    function findPriceRowForSize(sizeKey) {
-        var target = (sizeKey + ' cubic metres').toLowerCase();
-        var tds = document.querySelectorAll('td');
-        for (var i = 0; i < tds.length; i++) {
-            if (tds[i].textContent.trim().toLowerCase() !== target) continue;
-            var tr = tds[i].closest('tr');
-            for (var j = 0; j < 4; j++) {
-                if (!tr) break;
-                if (tr.querySelector('input[alt="Edit Row"]')) return tr;
-                tr = tr.nextElementSibling;
-            }
-        }
-        return null;
-    }
-
-    function waitFor(fn, timeoutMs) {
-        return new Promise(function(resolve, reject) {
-            var deadline = Date.now() + (timeoutMs || 10000);
+    function waitFor(fn, ms) {
+        return new Promise(function(res, rej) {
+            var end = Date.now() + (ms || 10000);
             (function check() {
-                var r = fn();
-                if (r) return resolve(r);
-                if (Date.now() > deadline) return reject(new Error('timeout'));
+                var r = fn(); if (r) return res(r);
+                if (Date.now() > end) return rej(new Error('timeout'));
                 setTimeout(check, 300);
             })();
         });
     }
 
-    function setLog(msg) {
+    function getDataRows() {
+        var snap = document.evaluate(
+            '//table[@id="dltRates"]/tbody/tr[position() mod 2 = 0]',
+            document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
+        );
+        var rows = [];
+        for (var i = 0; i < snap.snapshotLength; i++) rows.push(snap.snapshotItem(i));
+        return rows;
+    }
+
+    function waitForRows() {
+        return waitFor(function() {
+            var snap = document.evaluate(
+                '//table[@id="dltRates"]/tbody/tr[position() mod 2 = 0]',
+                document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
+            );
+            return snap.snapshotLength > 0 ? true : null;
+        }, 12000);
+    }
+
+    function findRowForSize(sz) {
+        var pat = new RegExp('(?<![\\d.])' + sz.toString().replace('.', '\\.') + '(?![\\d.])', 'i');
+        var rows = getDataRows();
+        for (var i = 0; i < rows.length; i++) {
+            if (pat.test(rows[i].innerText.replace(/\s+/g, ' '))) return rows[i];
+        }
+        return null;
+    }
+
+    function log(msg, color) {
         var el = document.getElementById('bb-log');
-        if (el) el.textContent = msg;
+        if (!el) return;
+        el.innerHTML += '<div style="color:' + (color || '#f9e2af') + '">' + msg + '</div>';
+        el.scrollTop = el.scrollHeight;
         console.log('[RateUpdater] ' + msg);
     }
 
     function setRunBtn(disabled) {
-        var btn = document.getElementById('bb-run');
-        if (btn) btn.disabled = disabled;
+        var b = document.getElementById('bb-run');
+        if (b) b.disabled = disabled;
     }
 
-    function processQueue() {
-        var raw = sessionStorage.getItem(SESSION_KEY);
-        if (!raw) return;
-        var queue;
-        try { queue = JSON.parse(raw); } catch(e) { sessionStorage.removeItem(SESSION_KEY); return; }
-        if (!queue.items || !queue.items.length) {
-            sessionStorage.removeItem(SESSION_KEY);
-            setLog('All done!');
-            setRunBtn(false);
-            return;
-        }
+    function setStopBtn(disabled) {
+        var b = document.getElementById('bb-stop');
+        if (b) b.disabled = disabled;
+    }
 
-        waitFor(function() {
-            return document.querySelectorAll('input[alt="Edit Row"]').length > 0 ? true : null;
-        }).then(function() {
-            var item = queue.items[0];
-            var size = item.size, price = item.price;
-            setLog('Updating ' + size + ' m3 -> $' + price);
+    async function runUpdates(items) {
+        stopFlag = false;
+        setRunBtn(true);
+        setStopBtn(false);
+        var done = 0;
+        for (var i = 0; i < items.length; i++) {
+            if (stopFlag) { log('Stopped. ' + done + '/' + items.length + ' saved.', '#fab387'); break; }
+            var sz = items[i].size, price = items[i].price;
 
-            var priceRow = findPriceRowForSize(size);
-            if (!priceRow) {
-                setLog('Row not found: ' + size + ' - skipping');
-                queue.items.shift();
-                sessionStorage.setItem(SESSION_KEY, JSON.stringify(queue));
-                setTimeout(processQueue, 300);
-                return;
-            }
+            var row = findRowForSize(sz);
+            if (!row) { log(sz + ' m3: row not found — skipping.', '#f38ba8'); continue; }
 
-            var editBtn = priceRow.querySelector('input[alt="Edit Row"]');
+            var editBtn = row.querySelector('input[alt="Edit Row"], input[title="Edit Row"]');
+            if (!editBtn) { log(sz + ' m3: Edit button not found — skipping.', '#f38ba8'); continue; }
+
+            log('Updating ' + sz + ' m3 → $' + price);
+            editBtn.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            await wait(400);
             editBtn.click();
 
-            waitFor(function() {
-                var inputs = priceRow.querySelectorAll('input[type="text"]');
-                return inputs.length > 0 ? inputs : null;
-            }, 6000).then(function(inputs) {
-                var input = inputs[0];
-                var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-                setter.call(input, String(price));
-                input.dispatchEvent(new Event('input',  { bubbles: true }));
-                input.dispatchEvent(new Event('change', { bubbles: true }));
+            var editTr;
+            try {
+                editTr = await waitFor(function() {
+                    var b = document.querySelector('input[alt="Update Row"], input[title="Update Row"]');
+                    return b ? b.closest('tr') : null;
+                }, 8000);
+            } catch(e) {
+                log(sz + ' m3: edit mode timed out — skipping.', '#f38ba8');
+                var cc = document.querySelector('input[alt="Cancel"], input[title="Cancel"]');
+                if (cc) cc.click();
+                continue;
+            }
 
-                var updateBtn = priceRow.querySelector('input[alt="Update Row"]');
-                if (!updateBtn) {
-                    var cancelBtn = priceRow.querySelector('input[alt="Cancel"]');
-                    if (cancelBtn) cancelBtn.click();
-                    setLog('No Update button for ' + size + ' - skipped');
-                    queue.items.shift();
-                    sessionStorage.setItem(SESSION_KEY, JSON.stringify(queue));
-                    setTimeout(processQueue, 600);
-                    return;
-                }
+            var priceInput = document.evaluate(
+                './/td[@class="ratecelledit"][4]/input',
+                editTr, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null
+            ).singleNodeValue;
 
-                queue.items.shift();
-                sessionStorage.setItem(SESSION_KEY, JSON.stringify(queue));
-                updateBtn.click();
-                setTimeout(processQueue, 2000);
+            if (!priceInput) {
+                log(sz + ' m3: price input not found — cancelling.', '#f38ba8');
+                var cn = editTr.querySelector('input[alt="Cancel"], input[title="Cancel"]');
+                if (cn) cn.click();
+                continue;
+            }
 
-            }).catch(function(e) {
-                setLog(size + ': ' + e.message);
-                queue.items.shift();
-                sessionStorage.setItem(SESSION_KEY, JSON.stringify(queue));
-                setTimeout(processQueue, 300);
-            });
-        }).catch(function(e) {
-            setLog('Table not ready: ' + e.message);
-            setRunBtn(false);
-        });
+            priceInput.focus();
+            priceInput.select();
+            var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+            setter.call(priceInput, String(price));
+            priceInput.dispatchEvent(new Event('input',  { bubbles: true }));
+            priceInput.dispatchEvent(new Event('change', { bubbles: true }));
+            await wait(300);
+
+            var updateBtn = editTr.querySelector('input[alt="Update Row"], input[title="Update Row"]');
+            if (!updateBtn) { log(sz + ' m3: Update Row button missing.', '#f38ba8'); continue; }
+
+            updateBtn.scrollIntoView({ block: 'center' });
+            updateBtn.click();
+
+            try { await waitForRows(); } catch(e) { await wait(2500); }
+            await wait(400);
+            done++;
+            log('  Saved', '#a6e3a1');
+        }
+        if (!stopFlag) log('Done — ' + done + '/' + items.length + ' updated.', '#a6e3a1');
+        setRunBtn(false);
+        setStopBtn(true);
     }
 
     function buildPanel() {
@@ -147,75 +146,83 @@
 
         var p = document.createElement('div');
         p.id = 'bb-panel';
-        p.style.cssText = 'position:fixed;top:20px;right:20px;width:310px;background:#1e1e2e;color:#cdd6f4;border:1px solid #585b70;border-radius:10px;padding:14px 16px;font-family:sans-serif;font-size:13px;z-index:99999;box-shadow:0 6px 28px rgba(0,0,0,.6);line-height:1.5;';
+        p.style.cssText = 'position:fixed;top:20px;right:20px;width:300px;background:#1e1e2e;color:#cdd6f4;border:1px solid #585b70;border-radius:10px;padding:14px 16px;font-family:sans-serif;font-size:13px;z-index:99999;box-shadow:0 6px 28px rgba(0,0,0,.65);';
 
         var hdr = document.createElement('div');
         hdr.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;';
-        var ttl = document.createElement('b');
-        ttl.style.color = '#cba6f7';
-        ttl.textContent = 'Rate Updater';
-        var minB = document.createElement('button');
-        minB.id = 'bb-min';
-        minB.textContent = '-';
-        minB.style.cssText = 'background:none;border:none;color:#cdd6f4;cursor:pointer;font-size:20px;padding:0;line-height:1;';
-        hdr.appendChild(ttl);
-        hdr.appendChild(minB);
-        p.appendChild(hdr);
+        var ttl = document.createElement('b'); ttl.style.color='#cba6f7'; ttl.textContent='Rate Updater';
+        var minB = document.createElement('button'); minB.id='bb-min'; minB.textContent='-'; minB.style.cssText='background:none;border:none;color:#cdd6f4;cursor:pointer;font-size:20px;padding:0;line-height:1;';
+        hdr.appendChild(ttl); hdr.appendChild(minB); p.appendChild(hdr);
 
-        var body = document.createElement('div');
-        body.id = 'bb-body';
+        var body = document.createElement('div'); body.id='bb-body';
 
-        var lbl = document.createElement('div');
-        lbl.style.cssText = 'color:#a6e3a1;margin-bottom:6px;font-size:12px;';
-        lbl.textContent = 'Paste price table (from SkipBin app):';
-        body.appendChild(lbl);
+        // Table
+        var tbl = document.createElement('table');
+        tbl.style.cssText = 'width:100%;border-collapse:collapse;margin-bottom:8px;';
+        var thead = tbl.createTHead(), hrow = thead.insertRow();
+        ['Bin Size','Will Set To ($)'].forEach(function(t) {
+            var th = document.createElement('th'); th.textContent=t;
+            th.style.cssText='text-align:left;padding:4px 6px;font-size:11px;color:#a6adc8;border-bottom:1px solid #45475a;';
+            hrow.appendChild(th);
+        });
+        var tbody = tbl.createTBody();
+        BIN_SIZES.forEach(function(sz) {
+            var tr = tbody.insertRow();
+            var td1 = tr.insertCell(); td1.textContent = sz+' m3'; td1.style.cssText='padding:4px 6px;font-size:12px;border-bottom:1px solid #313244;';
+            var td2 = tr.insertCell(); td2.style.cssText='padding:3px 6px;border-bottom:1px solid #313244;';
+            var inp = document.createElement('input'); inp.type='number'; inp.id='bb-p-'+sz; inp.min='0'; inp.placeholder='skip';
+            inp.style.cssText='width:100%;box-sizing:border-box;background:#181825;color:#cdd6f4;border:1px solid #585b70;border-radius:4px;padding:4px 6px;font-size:12px;';
+            td2.appendChild(inp);
+        });
+        body.appendChild(tbl);
 
-        var ta = document.createElement('textarea');
-        ta.id = 'bb-input';
-        ta.rows = 7;
-        ta.placeholder = 'Bin Size\tSearch Price\tWill Set To\n2 m3\t$179\t$178\n...';
-        ta.style.cssText = 'width:100%;box-sizing:border-box;background:#181825;color:#cdd6f4;border:1px solid #585b70;border-radius:5px;padding:6px;font-size:11px;resize:vertical;';
-        body.appendChild(ta);
+        // Buttons
+        var btnRow = document.createElement('div'); btnRow.style.cssText='display:flex;gap:6px;margin-bottom:6px;';
+        var clr  = document.createElement('button'); clr.textContent='Clear'; clr.style.cssText='flex:1;padding:7px;background:#313244;color:#cdd6f4;border:none;border-radius:5px;cursor:pointer;font-size:12px;';
+        var run  = document.createElement('button'); run.id='bb-run'; run.textContent='Update Prices'; run.style.cssText='flex:2;padding:7px;background:#cba6f7;color:#1e1e2e;border:none;border-radius:5px;cursor:pointer;font-weight:bold;font-size:13px;';
+        var stop = document.createElement('button'); stop.id='bb-stop'; stop.textContent='Stop'; stop.disabled=true; stop.style.cssText='flex:1;padding:7px;background:#45475a;color:#cdd6f4;border:none;border-radius:5px;cursor:pointer;font-size:12px;';
+        btnRow.appendChild(clr); btnRow.appendChild(run); btnRow.appendChild(stop); body.appendChild(btnRow);
 
-        var btn = document.createElement('button');
-        btn.id = 'bb-run';
-        btn.textContent = 'Update Prices';
-        btn.style.cssText = 'margin-top:8px;width:100%;padding:9px;background:#cba6f7;color:#1e1e2e;border:none;border-radius:5px;cursor:pointer;font-weight:bold;font-size:13px;';
-        body.appendChild(btn);
-
-        var log = document.createElement('div');
-        log.id = 'bb-log';
-        log.style.cssText = 'margin-top:7px;min-height:18px;color:#f9e2af;font-size:12px;word-break:break-word;';
-        body.appendChild(log);
+        var logDiv = document.createElement('div'); logDiv.id='bb-log'; logDiv.style.cssText='max-height:160px;overflow-y:auto;background:#181825;border:1px solid #313244;border-radius:5px;padding:6px;font-size:11px;line-height:1.7;display:none;';
+        body.appendChild(logDiv);
 
         p.appendChild(body);
         document.body.appendChild(p);
         console.log('[RateUpdater] panel built');
 
         minB.addEventListener('click', function() {
-            body.style.display = (body.style.display === 'none') ? '' : 'none';
-            minB.textContent  = (body.style.display === 'none') ? '+' : '-';
+            body.style.display = body.style.display==='none' ? '' : 'none';
+            minB.textContent   = body.style.display==='none' ? '+' : '-';
         });
-
-        btn.addEventListener('click', function() {
-            var text = ta.value;
-            if (!text.trim()) { setLog('Paste the price table first.'); return; }
-            var map = parseTable(text);
-            if (!map) { setLog('Parse failed - need Bin Size and Will Set To columns.'); return; }
-            var items = Object.keys(map).map(function(sz) { return { size: sz, price: map[sz] }; });
-            sessionStorage.setItem(SESSION_KEY, JSON.stringify({ items: items }));
-            setRunBtn(true);
-            setLog('Queued ' + items.length + ' rows...');
-            processQueue();
+        clr.addEventListener('click', function() {
+            BIN_SIZES.forEach(function(sz){ var e=document.getElementById('bb-p-'+sz); if(e)e.value=''; });
+            logDiv.innerHTML=''; logDiv.style.display='none';
+        });
+        stop.addEventListener('click', function() { stopFlag = true; });
+        run.addEventListener('click', function() {
+            var items = [];
+            BIN_SIZES.forEach(function(sz) {
+                var e = document.getElementById('bb-p-'+sz);
+                if (!e || e.value.trim()==='') return;
+                var pr = parseInt(e.value, 10);
+                if (!isNaN(pr)) items.push({size: sz, price: pr});
+            });
+            if (!items.length) { logDiv.innerHTML='<div style="color:#f38ba8">Enter at least one price.</div>'; logDiv.style.display=''; return; }
+            logDiv.innerHTML=''; logDiv.style.display='';
+            runUpdates(items);
         });
     }
 
-    buildPanel();
+    function init() {
+        if (window.location.href.toLowerCase().indexOf('rates_manage') === -1) return;
+        console.log('[RateUpdater] init');
+        buildPanel();
+    }
 
-    if (sessionStorage.getItem(SESSION_KEY)) {
-        setRunBtn(true);
-        setLog('Resuming...');
-        setTimeout(processQueue, 1200);
+    if (document.readyState === 'loading') {
+        window.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
     }
 
 })();

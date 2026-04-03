@@ -475,11 +475,11 @@ elif page == "BookABin":
             # Update Price section
             # ---------------------------------------------------------------
             st.subheader("💲 Update Price")
-            st.caption("Rule: bin sizes **≤ 7.5 m³** → price − 1  |  bin sizes **> 7.5 m³** → price unchanged")
+            st.caption("Rule: all available bin sizes → price − 1  |  bin sizes **> 7.5 m³** excluded")
 
-            # Build price_map: size → adjusted price
-            # Rule: sizes <= 7.5 m³ → price - 1; sizes > 7.5 m³ → unchanged
-            _price_map = {}   # size → (search_price, will_set_to)
+            # Build price_map: (waste_type, size) → (search_price, will_set_to)
+            # Rule: sizes <= 7.5 m³ → price - 1; sizes > 7.5 m³ → excluded
+            _price_map = {}   # (wt, sz) → (search_price, will_set_to)
             for _wt, _sizes in bab_results.items():
                 for _sz, _pr in _sizes.items():
                     if isinstance(_pr, (int, float)):
@@ -488,17 +488,17 @@ elif page == "BookABin":
                             _sz_f = float(_sz)
                         except (ValueError, TypeError):
                             _sz_f = 0.0
-                        if _sz_f <= 7.5:
-                            _adj = _raw - 1
-                        else:
-                            _adj = _raw
-                        if _sz not in _price_map or _adj < _price_map[_sz][1]:
-                            _price_map[_sz] = (_raw, _adj)
+                        if _sz_f > 7.5:
+                            continue
+                        _adj = _raw - 1
+                        _key = (_wt, _sz)
+                        if _key not in _price_map or _adj < _price_map[_key][1]:
+                            _price_map[_key] = (_raw, _adj)
 
             if _price_map:
                 _preview_rows = [
-                    {"Bin Size": f"{sz} m³", "Search Price": f"${_raw:,.0f}", "Will Set To": f"${_adj:,.0f}"}
-                    for sz, (_raw, _adj) in sorted(_price_map.items(), key=lambda x: float(x[0]))
+                    {"Waste Type": wt, "Bin Size": f"{sz} m³", "Search Price": f"${_raw:,.0f}", "Will Set To": f"${_adj:,.0f}"}
+                    for (wt, sz), (_raw, _adj) in sorted(_price_map.items(), key=lambda x: (x[0][0], float(x[0][1])))
                 ]
                 _df_preview = pd.DataFrame(_preview_rows)
                 st.dataframe(_df_preview, use_container_width=True, hide_index=True)
