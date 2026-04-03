@@ -39,31 +39,39 @@
         });
     }
 
-    function getDataRows() {
-        var snap = document.evaluate(
-            '//table[@id="dltRates"]/tbody/tr[position() mod 2 = 0]',
-            document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
-        );
-        var rows = [];
-        for (var i = 0; i < snap.snapshotLength; i++) rows.push(snap.snapshotItem(i));
-        return rows;
+    function getAllTableRows() {
+        var tbody = document.querySelector('table#dltRates tbody');
+        if (!tbody) return [];
+        return Array.prototype.slice.call(tbody.querySelectorAll('tr'));
     }
 
     function waitForRows() {
         return waitFor(function() {
-            var snap = document.evaluate(
-                '//table[@id="dltRates"]/tbody/tr[position() mod 2 = 0]',
-                document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
-            );
-            return snap.snapshotLength > 0 ? true : null;
+            var tbody = document.querySelector('table#dltRates tbody');
+            return (tbody && tbody.querySelectorAll('tr').length > 0) ? true : null;
         }, 15000);
     }
 
+    // Find the row that contains the Edit button for a given size.
+    // BookABin uses row pairs: one row has size/price text, the adjacent has the Edit button (or same row).
     function findRowForSize(sz) {
         var szPat = new RegExp('(?<![\\d.])' + sz.toString().replace('.', '\\.') + '(?![\\d.])', 'i');
-        var rows = getDataRows();
+        var rows = getAllTableRows();
         for (var i = 0; i < rows.length; i++) {
-            if (szPat.test(rows[i].innerText.replace(/\s+/g, ' '))) return rows[i];
+            var txt = rows[i].innerText.replace(/\s+/g, ' ');
+            if (!szPat.test(txt)) continue;
+            // Check this row for Edit button first
+            var btn = rows[i].querySelector('input[alt="Edit Row"], input[title="Edit Row"]');
+            if (btn) return rows[i];
+            // Check adjacent rows (prev/next in pair)
+            if (i > 0) {
+                btn = rows[i - 1].querySelector('input[alt="Edit Row"], input[title="Edit Row"]');
+                if (btn) return rows[i - 1];
+            }
+            if (i < rows.length - 1) {
+                btn = rows[i + 1].querySelector('input[alt="Edit Row"], input[title="Edit Row"]');
+                if (btn) return rows[i + 1];
+            }
         }
         return null;
     }
