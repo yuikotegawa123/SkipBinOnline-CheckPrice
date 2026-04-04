@@ -806,6 +806,29 @@ elif page == "BestPriceSkipBins":
 
             # --- Edited Price table: sizes < 7.5 m³, all waste types, price − 1 ---
             st.subheader("✏️ Edited Price (< 7.5 m³,  price − 1)")
+
+            # Account checker — show which saved accounts match the searched postcode
+            _bpsb_accs = st.session_state.get("bpsb_accounts", [])
+            _matched = [
+                a for a in _bpsb_accs
+                if a.get("postcode", "").strip() == saved_pc.strip() and a.get("username", "").strip()
+            ]
+            _unmatched = [
+                a for a in _bpsb_accs
+                if a.get("postcode", "").strip() != saved_pc.strip() and a.get("username", "").strip()
+            ]
+            if _matched:
+                st.success(
+                    "**Accounts linked to postcode " + saved_pc + ":** "
+                    + "  |  ".join(f"✅ {a['label']}: `{a['username']}`" for a in _matched)
+                )
+            else:
+                st.warning(f"⚠️ No saved account has postcode **{saved_pc}**.")
+            if _unmatched:
+                st.caption(
+                    "Other accounts: "
+                    + "  |  ".join(f"{a['label']}: `{a['username']}` (postcode {a.get('postcode') or 'not set'})" for a in _unmatched)
+                )
             _bpsb_lt75 = [s for s in BPSB.ALL_SIZES if float(s) < 7.5]
             _edited_rows = []
             for _wt in BPSB.WASTE_TYPES:
