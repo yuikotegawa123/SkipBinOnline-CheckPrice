@@ -858,6 +858,11 @@ elif page == "BestPriceSkipBins":
                 _min_date = _dod_to_min_date(saved_dod)
                 _edit_acc = _matched[0] if _matched else None
 
+                # Queue stored as {wt_index: "edit" | "undo"}
+                if "bpsb_wt_queue" not in st.session_state:
+                    st.session_state["bpsb_wt_queue"] = {}
+                _queue = st.session_state["bpsb_wt_queue"]
+
                 # One st.columns row per data row — same widths for header and data ensure alignment
                 _col_widths = [2] + [1] * len(_bpsb_lt75) + [1, 1]
 
@@ -873,7 +878,10 @@ elif page == "BestPriceSkipBins":
                 _undo_btns = []
                 for _wt_i, _wt in enumerate(BPSB.WASTE_TYPES):
                     _row = st.columns(_col_widths)
-                    _row[0].write(_wt)
+                    # Show queue indicator next to name
+                    _queued = _queue.get(_wt_i)
+                    _name_label = f"{'⏳ ' if _queued else ''}{_wt}{'  *(undo)*' if _queued == 'undo' else '  *(edit)*' if _queued == 'edit' else ''}"
+                    _row[0].markdown(_name_label)
                     for _ci, _sz in enumerate(_bpsb_lt75):
                         _pr = _orig_prices.get(_wt, {}).get(_sz)
                         _row[1 + _ci].write(f"${_pr - 1:,.0f}" if _pr is not None else "N/A")
@@ -886,7 +894,22 @@ elif page == "BestPriceSkipBins":
                         disabled=_edit_acc is None, use_container_width=True,
                     ))
 
-                # Result feedback + action processing per waste type
+                # Queue / dequeue on button click (no Selenium yet)
+                for _wt_i, _wt in enumerate(BPSB.WASTE_TYPES):
+                    if _edit_btns[_wt_i] and _edit_acc:
+                        if _queue.get(_wt_i) == "edit":
+                            del _queue[_wt_i]   # toggle off
+                        else:
+                            _queue[_wt_i] = "edit"
+                        st.rerun()
+                    if _undo_btns[_wt_i] and _edit_acc:
+                        if _queue.get(_wt_i) == "undo":
+                            del _queue[_wt_i]   # toggle off
+                        else:
+                            _queue[_wt_i] = "undo"
+                        st.rerun()
+
+                # Result feedback per waste type
                 for _wt_i, _wt in enumerate(BPSB.WASTE_TYPES):
                     _prev = st.session_state.get(f"bpsb_wt_result_{_wt_i}")
                     if _prev:
@@ -895,9 +918,8 @@ elif page == "BestPriceSkipBins":
                         else:
                             st.error(f"**{_wt}** — {_prev['msg']}")
 
-                def _run_wt_edit(wt, updates, undo=False):
-                    """Run a single waste-type edit in a thread; stores result in session state."""
-                    import threading
+                def _run_wt_edit(wt, undo=False):
+                    """Run a single waste-type edit; stores result in session state."""
                     idx = list(BPSB.WASTE_TYPES.keys()).index(wt)
                     wt_sizes = [s for s in _bpsb_lt75 if s in _orig_prices.get(wt, {})]
                     if undo:
@@ -906,7 +928,7 @@ elif page == "BestPriceSkipBins":
                         wt_updates = [(s, str(int(_orig_prices[wt][s]) - 1)) for s in wt_sizes]
                     if not wt_updates:
                         st.session_state[f"bpsb_wt_result_{idx}"] = {
-                            "ok": False, "msg": f"No priced sizes < 7.5 m³ found."
+                            "ok": False, "msg": "No priced sizes < 7.5 m³ found."
                         }
                         return
                     ok, msg = BPSB.update_waste_type_rates(
@@ -917,38 +939,38 @@ elif page == "BestPriceSkipBins":
                     )
                     st.session_state[f"bpsb_wt_result_{idx}"] = {"ok": ok, "msg": msg}
 
-                # Check for individual button clicks
-                _any_clicked = False
-                for _wt_i, _wt in enumerate(BPSB.WASTE_TYPES):
-                    if (_edit_btns[_wt_i] or _undo_btns[_wt_i]) and _edit_acc:
-                        _any_clicked = True
-                        _is_undo = bool(_undo_btns[_wt_i])
-                        _label = "Undo" if _is_undo else "Edit Price"
-                        with st.spinner(f"{_label}: {_wt}…"):
-                            _run_wt_edit(_wt, None, undo=_is_undo)
+                if _edit_acc:
+                    import concurrent.futures
+                    _btn_row = st.columns([1, 1, 1, 5])
+
+                    # Run Queue button — runs all queued items in parallel
+                    _run_queue_btn = _btn_row[0].button(
+                        f"▶ Run Queue ({len(_queue)})" if _queue else "▶ Run Queue",
+                        key="bpsb_run_queue",
+                        disabled=not _queue,
+                        use_container_width=True,
+                    )
+                    _edit_all = _btn_row[1].button("✏️ Edit All", key="bpsb_edit_all", use_container_width=True)
+                    _undo_all = _btn_row[2].button("↩️ Undo All", key="bpsb_undo_all", use_container_width=True)
+
+                    if _run_queue_btn and _queue:
+                        _items = list(_queue.items())  # [(wt_i, "edit"|"undo"), ...]
+                        _wts_to_run = [(list(BPSB.WASTE_TYPES.keys())[i], v == "undo") for i, v in _items]
+                        with st.spinner(f"Running {len(_wts_to_run)} queued item(s) in parallel…"):
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=len(_wts_to_run)) as _pool:
+                                _futures = [_pool.submit(_run_wt_edit, wt, undo) for wt, undo in _wts_to_run]
+                                concurrent.futures.wait(_futures)
+                        st.session_state["bpsb_wt_queue"] = {}
                         st.rerun()
 
-                # Edit All / Undo All buttons
-                if _edit_acc:
-                    _ea_col1, _ea_col2, _ = st.columns([1, 1, 6])
-                    _edit_all = _ea_col1.button("✏️ Edit All", key="bpsb_edit_all", use_container_width=True)
-                    _undo_all = _ea_col2.button("↩️ Undo All", key="bpsb_undo_all", use_container_width=True)
-
                     if _edit_all or _undo_all:
-                        import concurrent.futures
                         _is_undo_all = bool(_undo_all)
-                        _label_all = "Undo All" if _is_undo_all else "Edit All"
-                        _wts_to_run = [
-                            wt for wt in BPSB.WASTE_TYPES
-                            if any(s in _orig_prices.get(wt, {}) for s in _bpsb_lt75)
-                        ]
-                        with st.spinner(f"{_label_all}: running {len(_wts_to_run)} waste types in parallel…"):
-                            with concurrent.futures.ThreadPoolExecutor(max_workers=len(_wts_to_run)) as _pool:
-                                _futures = [
-                                    _pool.submit(_run_wt_edit, wt, None, _is_undo_all)
-                                    for wt in _wts_to_run
-                                ]
+                        _all_wts = [wt for wt in BPSB.WASTE_TYPES if any(s in _orig_prices.get(wt, {}) for s in _bpsb_lt75)]
+                        with st.spinner(f"{'Undo' if _is_undo_all else 'Edit'} All: {len(_all_wts)} waste types in parallel…"):
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=len(_all_wts)) as _pool:
+                                _futures = [_pool.submit(_run_wt_edit, wt, _is_undo_all) for wt in _all_wts]
                                 concurrent.futures.wait(_futures)
+                        st.session_state["bpsb_wt_queue"] = {}
                         st.rerun()
 
     # -----------------------------------------------------------------------
