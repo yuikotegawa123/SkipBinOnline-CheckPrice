@@ -329,7 +329,6 @@ def update_rate_price(supplier_id: str, password: str, row_id: str, new_price: s
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
-    from selenium.webdriver.common.action_chains import ActionChains
     from selenium.webdriver.common.keys import Keys
 
     edit_url = (
@@ -357,8 +356,9 @@ def update_rate_price(supplier_id: str, password: str, row_id: str, new_price: s
         if price_input is None:
             return False, "Could not find Base Price input inside the rates table.", driver.get_screenshot_as_png()
 
-        # Triple-click to select all existing text, then type the new price
-        ActionChains(driver).triple_click(price_input).perform()
+        # Select all existing text then type the new price
+        price_input.click()
+        price_input.send_keys(Keys.CONTROL + "a")
         price_input.send_keys(new_price)
 
         # --- Find the confirm (✓) button next to the edited row ---
