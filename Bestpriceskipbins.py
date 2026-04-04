@@ -209,9 +209,10 @@ def run_search(postcode, delivery_date, collection_date,
 # Supplier login  (Selenium)
 # ---------------------------------------------------------------------------
 
-def login(supplier_id: str, password: str):
+def login(supplier_id: str, password: str, login_delay: float = 5.0):
     """
     Log in to https://bestpriceskipbins.com.au/supplier/ using Selenium.
+    login_delay : seconds to wait after clicking Login before taking the screenshot.
     Returns (success: bool, message: str, screenshot: bytes | None).
     """
     import time
@@ -265,7 +266,7 @@ def login(supplier_id: str, password: str):
             login_btn = driver.find_element(By.XPATH, "//input[@type='submit']")
 
         driver.execute_script("arguments[0].click();", login_btn)
-        time.sleep(3)
+        time.sleep(login_delay)
 
         shot = driver.get_screenshot_as_png()
         src  = driver.page_source.lower()

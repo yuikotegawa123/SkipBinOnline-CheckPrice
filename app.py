@@ -917,6 +917,13 @@ elif page == "BestPriceSkipBins":
         _sel_acc = st.selectbox("Select account to log in with", _acc_labels, key="bpsb_login_acc_sel")
         _sel_idx = int(_sel_acc.split()[1]) - 1  # "Account 1..." → index 0
 
+        _login_delay = st.slider(
+            "⏱️ Page load delay after login (seconds)",
+            min_value=2, max_value=20, value=6, step=1,
+            key="bpsb_login_delay",
+            help="Increase if the dashboard hasn't finished loading in the screenshot.",
+        )
+
         login_btn_main = st.button("🔑 Login & Take Screenshot", type="primary", key="bpsb_login_btn")
 
         if login_btn_main:
@@ -926,8 +933,8 @@ elif page == "BestPriceSkipBins":
             if not _login_user or not _login_pwd:
                 st.error(f"❌ {_login_acc['label']} has no username or password set. Please fill them in above first.")
             else:
-                with st.spinner(f"🔑 Logging in as {_login_acc['label']} ({_login_user})…"):
-                    _ok, _msg, _shot = BPSB.login(_login_user, _login_pwd)
+                with st.spinner(f"🔑 Logging in as {_login_acc['label']} ({_login_user})… waiting {_login_delay}s for page to load"):
+                    _ok, _msg, _shot = BPSB.login(_login_user, _login_pwd, login_delay=_login_delay)
                 if _ok:
                     st.success(f"✅ {_msg}")
                 else:
