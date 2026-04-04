@@ -909,7 +909,32 @@ elif page == "BestPriceSkipBins":
                             _queue[_wt_i] = "undo"
                         st.rerun()
 
+                # ── Queue table ──────────────────────────────────────────
+                st.markdown("#### 🗂 Queue")
+                if not _queue:
+                    st.caption("No actions queued. Click ✏️ Edit or ↩️ Undo above to add.")
+                else:
+                    _wt_keys = list(BPSB.WASTE_TYPES.keys())
+                    _q_hdr = st.columns([3, 1, 1])
+                    _q_hdr[0].markdown("**Waste Type**")
+                    _q_hdr[1].markdown("**Action**")
+                    _q_hdr[2].markdown("**Remove**")
+                    for _qi, (_q_idx, _q_action) in enumerate(list(_queue.items())):
+                        _q_wt = _wt_keys[_q_idx]
+                        _qc = st.columns([3, 1, 1])
+                        _qc[0].write(_q_wt)
+                        _qc[1].write("✏️ Edit" if _q_action == "edit" else "↩️ Undo")
+                        if _qc[2].button("🗑️", key=f"bpsb_q_del_{_qi}_{_q_idx}", use_container_width=True):
+                            del _queue[_q_idx]
+                            st.rerun()
+
                 # Result feedback per waste type
+                _new_results = st.session_state.get("bpsb_wt_new_results", [])
+                if _new_results:
+                    for _nr in _new_results:
+                        st.toast(_nr["msg"], icon="✅" if _nr["ok"] else "❌")
+                    st.session_state["bpsb_wt_new_results"] = []
+
                 for _wt_i, _wt in enumerate(BPSB.WASTE_TYPES):
                     _prev = st.session_state.get(f"bpsb_wt_result_{_wt_i}")
                     if _prev:
@@ -927,9 +952,9 @@ elif page == "BestPriceSkipBins":
                     else:
                         wt_updates = [(s, str(int(_orig_prices[wt][s]) - 1)) for s in wt_sizes]
                     if not wt_updates:
-                        st.session_state[f"bpsb_wt_result_{idx}"] = {
-                            "ok": False, "msg": "No priced sizes < 7.5 m³ found."
-                        }
+                        result = {"ok": False, "msg": f"{wt}: No priced sizes < 7.5 m³ found."}
+                        st.session_state[f"bpsb_wt_result_{idx}"] = result
+                        st.session_state.setdefault("bpsb_wt_new_results", []).append(result)
                         return
                     ok, msg = BPSB.update_waste_type_rates(
                         _edit_acc["username"], _edit_acc["password"],
@@ -937,7 +962,9 @@ elif page == "BestPriceSkipBins":
                         min_date=_min_date if _min_date else None,
                         login_delay=6, edit_delay=3,
                     )
-                    st.session_state[f"bpsb_wt_result_{idx}"] = {"ok": ok, "msg": msg}
+                    result = {"ok": ok, "msg": f"{wt} — {msg}"}
+                    st.session_state[f"bpsb_wt_result_{idx}"] = result
+                    st.session_state.setdefault("bpsb_wt_new_results", []).append(result)
 
                 if _edit_acc:
                     import concurrent.futures
@@ -954,8 +981,9 @@ elif page == "BestPriceSkipBins":
                     _undo_all = _btn_row[2].button("↩️ Undo All", key="bpsb_undo_all", use_container_width=True)
 
                     if _run_queue_btn and _queue:
-                        _items = list(_queue.items())  # [(wt_i, "edit"|"undo"), ...]
+                        _items = list(_queue.items())
                         _wts_to_run = [(list(BPSB.WASTE_TYPES.keys())[i], v == "undo") for i, v in _items]
+                        st.session_state["bpsb_wt_new_results"] = []
                         with st.spinner(f"Running {len(_wts_to_run)} queued item(s) in parallel…"):
                             with concurrent.futures.ThreadPoolExecutor(max_workers=len(_wts_to_run)) as _pool:
                                 _futures = [_pool.submit(_run_wt_edit, wt, undo) for wt, undo in _wts_to_run]
@@ -966,6 +994,7 @@ elif page == "BestPriceSkipBins":
                     if _edit_all or _undo_all:
                         _is_undo_all = bool(_undo_all)
                         _all_wts = [wt for wt in BPSB.WASTE_TYPES if any(s in _orig_prices.get(wt, {}) for s in _bpsb_lt75)]
+                        st.session_state["bpsb_wt_new_results"] = []
                         with st.spinner(f"{'Undo' if _is_undo_all else 'Edit'} All: {len(_all_wts)} waste types in parallel…"):
                             with concurrent.futures.ThreadPoolExecutor(max_workers=len(_all_wts)) as _pool:
                                 _futures = [_pool.submit(_run_wt_edit, wt, _is_undo_all) for wt in _all_wts]
