@@ -503,28 +503,26 @@ def update_multiple_rates(supplier_id: str, password: str,
     Log in ONCE then update multiple rows sequentially.
     updates : list of (size_str, new_price_str) e.g. [("2", "189"), ("3", "308")].
     Row IDs are auto-detected from the rates page — no hardcoding needed.
-    Returns (success, message, screenshot).
+    Returns (success, message).
     """
     driver = _make_screenshot_driver()
     results = []
     try:
         ok, msg = _do_login(driver, supplier_id, password, login_delay)
         if not ok:
-            return False, msg, driver.get_screenshot_as_png()
+            return False, msg
 
         # Auto-detect size → row_id mapping from the live page
         id_map = _get_row_id_map(driver, rates_url, min_date=min_date)
 
         if not id_map:
-            # Diagnose: capture page title/URL to surface in error
             page_title = driver.title
             current_url = driver.current_url
-            shot = driver.get_screenshot_as_png()
             return False, (
                 f"Could not detect any row IDs on the rates page. "
                 f"Page title: '{page_title}' | URL: {current_url} — "
                 f"The supplier may not be logged in, or the page structure has changed."
-            ), shot
+            )
 
         for size_str, new_price in updates:
             row_id = id_map.get(size_str)
@@ -537,18 +535,13 @@ def update_multiple_rates(supplier_id: str, password: str,
             else:
                 results.append(f"{size_str} m³: ❌ {msg}")
 
-        shot = driver.get_screenshot_as_png()
         all_ok = all("❌" not in r for r in results)
         summary = "  |  ".join(results)
-        return all_ok, summary, shot
+        return all_ok, summary
 
     except Exception as exc:
-        try:
-            shot = driver.get_screenshot_as_png()
-        except Exception:
-            shot = None
         summary = ("  |  ".join(results) + f"  |  ERROR: {exc}").lstrip("  |  ")
-        return False, summary, shot
+        return False, summary
     finally:
         try:
             driver.quit()
@@ -567,11 +560,11 @@ def update_waste_type_rates(supplier_id: str, password: str,
     waste_type : key in WASTE_TYPE_RATES_URLS
     updates    : list of (size_str, new_price_str) for sizes < 7.5 m³
     min_date   : "YYYY-MM-DD" to target specific date column
-    Returns (success, message, screenshot).
+    Returns (success, message).
     """
     rates_url = WASTE_TYPE_RATES_URLS.get(waste_type)
     if not rates_url:
-        return False, f"No rates URL configured for waste type: {waste_type}", None
+        return False, f"No rates URL configured for waste type: {waste_type}"
 
     return update_multiple_rates(
         supplier_id, password,

@@ -894,38 +894,62 @@ elif page == "BestPriceSkipBins":
                             st.success(f"**{_wt}** — {_prev['msg']}")
                         else:
                             st.error(f"**{_wt}** — {_prev['msg']}")
-                        if _prev.get("shot"):
-                            st.image(_prev["shot"], use_container_width=True)
 
+                def _run_wt_edit(wt, updates, undo=False):
+                    """Run a single waste-type edit in a thread; stores result in session state."""
+                    import threading
+                    idx = list(BPSB.WASTE_TYPES.keys()).index(wt)
+                    wt_sizes = [s for s in _bpsb_lt75 if s in _orig_prices.get(wt, {})]
+                    if undo:
+                        wt_updates = [(s, str(int(_orig_prices[wt][s]))) for s in wt_sizes]
+                    else:
+                        wt_updates = [(s, str(int(_orig_prices[wt][s]) - 1)) for s in wt_sizes]
+                    if not wt_updates:
+                        st.session_state[f"bpsb_wt_result_{idx}"] = {
+                            "ok": False, "msg": f"No priced sizes < 7.5 m³ found."
+                        }
+                        return
+                    ok, msg = BPSB.update_waste_type_rates(
+                        _edit_acc["username"], _edit_acc["password"],
+                        waste_type=wt, updates=wt_updates,
+                        min_date=_min_date if _min_date else None,
+                        login_delay=6, edit_delay=3,
+                    )
+                    st.session_state[f"bpsb_wt_result_{idx}"] = {"ok": ok, "msg": msg}
+
+                # Check for individual button clicks
+                _any_clicked = False
+                for _wt_i, _wt in enumerate(BPSB.WASTE_TYPES):
                     if (_edit_btns[_wt_i] or _undo_btns[_wt_i]) and _edit_acc:
-                        _wt_sizes = [s for s in _bpsb_lt75 if s in _orig_prices.get(_wt, {})]
-                        if _undo_btns[_wt_i]:
-                            _wt_updates = [(s, str(int(_orig_prices[_wt][s]))) for s in _wt_sizes]
-                            _action_label = "Undo"
-                        else:
-                            _wt_updates = [(s, str(int(_orig_prices[_wt][s]) - 1)) for s in _wt_sizes]
-                            _action_label = "Edit Price"
+                        _any_clicked = True
+                        _is_undo = bool(_undo_btns[_wt_i])
+                        _label = "Undo" if _is_undo else "Edit Price"
+                        with st.spinner(f"{_label}: {_wt}…"):
+                            _run_wt_edit(_wt, None, undo=_is_undo)
+                        st.rerun()
 
-                        if not _wt_updates:
-                            st.warning(f"⚠️ No priced sizes < 7.5 m³ found for {_wt}.")
-                        else:
-                            with st.spinner(
-                                f"✏️ {_action_label}: {_wt} — "
-                                f"logging in as {_edit_acc['label']} ({_edit_acc['username']})…"
-                            ):
-                                _wrok, _wrmsg, _wrshot = BPSB.update_waste_type_rates(
-                                    _edit_acc["username"],
-                                    _edit_acc["password"],
-                                    waste_type=_wt,
-                                    updates=_wt_updates,
-                                    min_date=_min_date if _min_date else None,
-                                    login_delay=6,
-                                    edit_delay=3,
-                                )
-                            st.session_state[f"bpsb_wt_result_{_wt_i}"] = {
-                                "ok": _wrok, "msg": _wrmsg, "shot": _wrshot
-                            }
-                            st.rerun()
+                # Edit All / Undo All buttons
+                if _edit_acc:
+                    _ea_col1, _ea_col2, _ = st.columns([1, 1, 6])
+                    _edit_all = _ea_col1.button("✏️ Edit All", key="bpsb_edit_all", use_container_width=True)
+                    _undo_all = _ea_col2.button("↩️ Undo All", key="bpsb_undo_all", use_container_width=True)
+
+                    if _edit_all or _undo_all:
+                        import concurrent.futures
+                        _is_undo_all = bool(_undo_all)
+                        _label_all = "Undo All" if _is_undo_all else "Edit All"
+                        _wts_to_run = [
+                            wt for wt in BPSB.WASTE_TYPES
+                            if any(s in _orig_prices.get(wt, {}) for s in _bpsb_lt75)
+                        ]
+                        with st.spinner(f"{_label_all}: running {len(_wts_to_run)} waste types in parallel…"):
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=len(_wts_to_run)) as _pool:
+                                _futures = [
+                                    _pool.submit(_run_wt_edit, wt, None, _is_undo_all)
+                                    for wt in _wts_to_run
+                                ]
+                                concurrent.futures.wait(_futures)
+                        st.rerun()
 
     # -----------------------------------------------------------------------
     # Sub-tab: Sign In Information  (3 saved accounts, passwords locked)
