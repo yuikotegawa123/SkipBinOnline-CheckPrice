@@ -802,6 +802,26 @@ elif page == "BestPriceSkipBins":
                 use_container_width=True,
             )
 
+            st.markdown("---")
+
+            # --- Edited Price table: sizes < 7.5 m³, all waste types, price − 1 ---
+            st.subheader("✏️ Edited Price (< 7.5 m³,  price − 1)")
+            _bpsb_lt75 = [s for s in BPSB.ALL_SIZES if float(s) < 7.5]
+            _edited_rows = []
+            for _wt in BPSB.WASTE_TYPES:
+                _row = {"Waste Type": _wt}
+                for _sz in _bpsb_lt75:
+                    _pr = bpsb_results.get(_wt, {}).get(_sz)
+                    if isinstance(_pr, (int, float)):
+                        _row[f"{_sz} m³"] = f"${_pr - 1:,.0f}"
+                    else:
+                        _row[f"{_sz} m³"] = "N/A"
+                _edited_rows.append(_row)
+            st.dataframe(
+                pd.DataFrame(_edited_rows).set_index("Waste Type"),
+                use_container_width=True,
+            )
+
     # -----------------------------------------------------------------------
     # Sub-tab: Sign In Information  (3 saved accounts, passwords locked)
     # -----------------------------------------------------------------------
