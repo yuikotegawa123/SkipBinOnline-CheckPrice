@@ -851,30 +851,29 @@ elif page == "BestPriceSkipBins":
             _min_date = _dod_to_min_date(saved_dod)
             _edit_acc = _matched[0] if _matched else None
 
-            # Header row
-            _col_widths = [2, 2] + [1] * len(_bpsb_lt75)
+            # Layout: Waste Type | 2m³ … 7m³ | ✏️ Edit | ↩️ Undo
+            _col_widths = [2] + [1] * len(_bpsb_lt75) + [1, 1]
             _hdr_cols = st.columns(_col_widths)
             _hdr_cols[0].markdown("**Waste Type**")
-            _hdr_cols[1].markdown("**Actions**")
             for _hi, _sz in enumerate(_bpsb_lt75):
-                _hdr_cols[2 + _hi].markdown(f"**{_sz} m³**")
+                _hdr_cols[1 + _hi].markdown(f"**{_sz} m³**")
+            _hdr_cols[-2].markdown("**✏️ Edit**")
+            _hdr_cols[-1].markdown("**↩️ Undo**")
             st.markdown("<hr style='margin:4px 0'>", unsafe_allow_html=True)
 
             for _wt_i, _wt in enumerate(BPSB.WASTE_TYPES):
                 _row_cols = st.columns(_col_widths)
                 # Waste type name
                 _row_cols[0].write(_wt)
-                # Edit / Undo buttons stacked in col 1
-                with _row_cols[1]:
-                    _btn_a, _btn_b = st.columns(2)
-                    _edit_btn = _btn_a.button("✏️ Edit", key=f"bpsb_wt_edit_{_wt_i}",
-                                              disabled=_edit_acc is None, use_container_width=True)
-                    _undo_btn = _btn_b.button("↩️ Undo", key=f"bpsb_wt_undo_{_wt_i}",
-                                              disabled=_edit_acc is None, use_container_width=True)
                 # Price cells
                 for _ci, _sz in enumerate(_bpsb_lt75):
                     _pr = _orig_prices[_wt].get(_sz)
-                    _row_cols[2 + _ci].write(f"${_pr - 1:,.0f}" if _pr is not None else "N/A")
+                    _row_cols[1 + _ci].write(f"${_pr - 1:,.0f}" if _pr is not None else "N/A")
+                # Buttons on the right
+                _edit_btn = _row_cols[-2].button("✏️ Edit", key=f"bpsb_wt_edit_{_wt_i}",
+                                                 disabled=_edit_acc is None, use_container_width=True)
+                _undo_btn = _row_cols[-1].button("↩️ Undo", key=f"bpsb_wt_undo_{_wt_i}",
+                                                 disabled=_edit_acc is None, use_container_width=True)
 
                 # Result feedback below this row
                 _prev = st.session_state.get(f"bpsb_wt_result_{_wt_i}")
