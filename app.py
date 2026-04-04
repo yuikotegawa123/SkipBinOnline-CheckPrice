@@ -763,6 +763,16 @@ elif page == "BestPriceSkipBins":
                 st.session_state["bpsb_search_pc"]  = bpsb_postcode
                 st.session_state["bpsb_search_dod"] = bpsb_dod_raw
                 st.session_state["bpsb_search_pud"] = bpsb_pud_raw
+                # Compute edited prices (< 7.5 m³) — stored separately, NOT in disk cache
+                _lt75 = [s for s in BPSB.ALL_SIZES if float(s) < 7.5]
+                _ep = {}
+                for _wt in BPSB.WASTE_TYPES:
+                    _ep[_wt] = {}
+                    for _sz in _lt75:
+                        _pr = _fetched.get(_wt, {}).get(_sz)
+                        if isinstance(_pr, (int, float)):
+                            _ep[_wt][_sz] = _pr
+                st.session_state["bpsb_edited_prices"] = _ep
                 _save_cache(_BPSB_CACHE, {
                     "results": _fetched,
                     "pc":      bpsb_postcode,
@@ -839,86 +849,83 @@ elif page == "BestPriceSkipBins":
                     + "  |  ".join(f"{a['label']}: `{a['username']}` (postcode {a.get('postcode') or 'not set'})" for a in _unmatched)
                 )
             _bpsb_lt75 = [s for s in BPSB.ALL_SIZES if float(s) < 7.5]
-            # Build {wt: {size: orig_price}} for use by Edit/Undo buttons
-            _orig_prices = {}
-            for _wt in BPSB.WASTE_TYPES:
-                _orig_prices[_wt] = {}
-                for _sz in _bpsb_lt75:
-                    _pr = bpsb_results.get(_wt, {}).get(_sz)
-                    if isinstance(_pr, (int, float)):
-                        _orig_prices[_wt][_sz] = _pr
+            # Read orig_prices from session state — only present after a fresh search
+            _orig_prices = st.session_state.get("bpsb_edited_prices", {})
 
-            _min_date = _dod_to_min_date(saved_dod)
-            _edit_acc = _matched[0] if _matched else None
+            if not _orig_prices:
+                st.info("Run a price search above to populate the Edited Price table.")
+            else:
+                _min_date = _dod_to_min_date(saved_dod)
+                _edit_acc = _matched[0] if _matched else None
 
-            # One st.columns row per data row — same widths for header and data ensure alignment
-            _col_widths = [2] + [1] * len(_bpsb_lt75) + [1, 1]
+                # One st.columns row per data row — same widths for header and data ensure alignment
+                _col_widths = [2] + [1] * len(_bpsb_lt75) + [1, 1]
 
-            # Header row (button columns intentionally empty)
-            _hdr = st.columns(_col_widths)
-            _hdr[0].markdown("**Waste Type**")
-            for _hi, _sz in enumerate(_bpsb_lt75):
-                _hdr[1 + _hi].markdown(f"**{_sz} m³**")
-            st.divider()
+                # Header row (button columns intentionally empty)
+                _hdr = st.columns(_col_widths)
+                _hdr[0].markdown("**Waste Type**")
+                for _hi, _sz in enumerate(_bpsb_lt75):
+                    _hdr[1 + _hi].markdown(f"**{_sz} m³**")
+                st.divider()
 
-            # Data rows with inline Edit / Undo buttons
-            _edit_btns = []
-            _undo_btns = []
-            for _wt_i, _wt in enumerate(BPSB.WASTE_TYPES):
-                _row = st.columns(_col_widths)
-                _row[0].write(_wt)
-                for _ci, _sz in enumerate(_bpsb_lt75):
-                    _pr = _orig_prices[_wt].get(_sz)
-                    _row[1 + _ci].write(f"${_pr - 1:,.0f}" if _pr is not None else "N/A")
-                _edit_btns.append(_row[-2].button(
-                    "✏️ Edit", key=f"bpsb_wt_edit_{_wt_i}",
-                    disabled=_edit_acc is None, use_container_width=True,
-                ))
-                _undo_btns.append(_row[-1].button(
-                    "↩️ Undo", key=f"bpsb_wt_undo_{_wt_i}",
-                    disabled=_edit_acc is None, use_container_width=True,
-                ))
+                # Data rows with inline Edit / Undo buttons
+                _edit_btns = []
+                _undo_btns = []
+                for _wt_i, _wt in enumerate(BPSB.WASTE_TYPES):
+                    _row = st.columns(_col_widths)
+                    _row[0].write(_wt)
+                    for _ci, _sz in enumerate(_bpsb_lt75):
+                        _pr = _orig_prices.get(_wt, {}).get(_sz)
+                        _row[1 + _ci].write(f"${_pr - 1:,.0f}" if _pr is not None else "N/A")
+                    _edit_btns.append(_row[-2].button(
+                        "✏️ Edit", key=f"bpsb_wt_edit_{_wt_i}",
+                        disabled=_edit_acc is None, use_container_width=True,
+                    ))
+                    _undo_btns.append(_row[-1].button(
+                        "↩️ Undo", key=f"bpsb_wt_undo_{_wt_i}",
+                        disabled=_edit_acc is None, use_container_width=True,
+                    ))
 
-            # Result feedback + action processing per waste type
-            for _wt_i, _wt in enumerate(BPSB.WASTE_TYPES):
-                _prev = st.session_state.get(f"bpsb_wt_result_{_wt_i}")
-                if _prev:
-                    if _prev["ok"]:
-                        st.success(f"**{_wt}** — {_prev['msg']}")
-                    else:
-                        st.error(f"**{_wt}** — {_prev['msg']}")
-                    if _prev.get("shot"):
-                        st.image(_prev["shot"], use_container_width=True)
+                # Result feedback + action processing per waste type
+                for _wt_i, _wt in enumerate(BPSB.WASTE_TYPES):
+                    _prev = st.session_state.get(f"bpsb_wt_result_{_wt_i}")
+                    if _prev:
+                        if _prev["ok"]:
+                            st.success(f"**{_wt}** — {_prev['msg']}")
+                        else:
+                            st.error(f"**{_wt}** — {_prev['msg']}")
+                        if _prev.get("shot"):
+                            st.image(_prev["shot"], use_container_width=True)
 
-                if (_edit_btns[_wt_i] or _undo_btns[_wt_i]) and _edit_acc:
-                    _wt_sizes = [s for s in _bpsb_lt75 if s in _orig_prices.get(_wt, {})]
-                    if _undo_btns[_wt_i]:
-                        _wt_updates = [(s, str(int(_orig_prices[_wt][s]))) for s in _wt_sizes]
-                        _action_label = "Undo"
-                    else:
-                        _wt_updates = [(s, str(int(_orig_prices[_wt][s]) - 1)) for s in _wt_sizes]
-                        _action_label = "Edit Price"
+                    if (_edit_btns[_wt_i] or _undo_btns[_wt_i]) and _edit_acc:
+                        _wt_sizes = [s for s in _bpsb_lt75 if s in _orig_prices.get(_wt, {})]
+                        if _undo_btns[_wt_i]:
+                            _wt_updates = [(s, str(int(_orig_prices[_wt][s]))) for s in _wt_sizes]
+                            _action_label = "Undo"
+                        else:
+                            _wt_updates = [(s, str(int(_orig_prices[_wt][s]) - 1)) for s in _wt_sizes]
+                            _action_label = "Edit Price"
 
-                    if not _wt_updates:
-                        st.warning(f"⚠️ No priced sizes < 7.5 m³ found for {_wt}.")
-                    else:
-                        with st.spinner(
-                            f"✏️ {_action_label}: {_wt} — "
-                            f"logging in as {_edit_acc['label']} ({_edit_acc['username']})…"
-                        ):
-                            _wrok, _wrmsg, _wrshot = BPSB.update_waste_type_rates(
-                                _edit_acc["username"],
-                                _edit_acc["password"],
-                                waste_type=_wt,
-                                updates=_wt_updates,
-                                min_date=_min_date if _min_date else None,
-                                login_delay=6,
-                                edit_delay=3,
-                            )
-                        st.session_state[f"bpsb_wt_result_{_wt_i}"] = {
-                            "ok": _wrok, "msg": _wrmsg, "shot": _wrshot
-                        }
-                        st.rerun()
+                        if not _wt_updates:
+                            st.warning(f"⚠️ No priced sizes < 7.5 m³ found for {_wt}.")
+                        else:
+                            with st.spinner(
+                                f"✏️ {_action_label}: {_wt} — "
+                                f"logging in as {_edit_acc['label']} ({_edit_acc['username']})…"
+                            ):
+                                _wrok, _wrmsg, _wrshot = BPSB.update_waste_type_rates(
+                                    _edit_acc["username"],
+                                    _edit_acc["password"],
+                                    waste_type=_wt,
+                                    updates=_wt_updates,
+                                    min_date=_min_date if _min_date else None,
+                                    login_delay=6,
+                                    edit_delay=3,
+                                )
+                            st.session_state[f"bpsb_wt_result_{_wt_i}"] = {
+                                "ok": _wrok, "msg": _wrmsg, "shot": _wrshot
+                            }
+                            st.rerun()
 
     # -----------------------------------------------------------------------
     # Sub-tab: Sign In Information  (3 saved accounts, passwords locked)
