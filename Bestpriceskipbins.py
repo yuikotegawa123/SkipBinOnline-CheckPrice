@@ -356,9 +356,18 @@ def update_rate_price(supplier_id: str, password: str, row_id: str, new_price: s
         if price_input is None:
             return False, "Could not find Base Price input inside the rates table.", driver.get_screenshot_as_png()
 
-        # Find ALL visible text inputs inside the rates table (Base Price + every day column)
-        table_inputs = driver.find_elements(By.CSS_SELECTOR, "table input[type='text']")
-        visible_inputs = [inp for inp in table_inputs if inp.is_displayed()]
+        # Find only the Price row inputs (not Stock row).
+        # The Price row has a <td> with text "Price:" — grab inputs only from that <tr>.
+        price_row_inputs = driver.find_elements(
+            By.XPATH,
+            "//td[normalize-space(text())='Price:']/ancestor::tr[1]//input[@type='text']"
+        )
+        visible_inputs = [inp for inp in price_row_inputs if inp.is_displayed()]
+
+        if not visible_inputs:
+            # Fallback: all table inputs (old behaviour) if row structure differs
+            table_inputs = driver.find_elements(By.CSS_SELECTOR, "table input[type='text']")
+            visible_inputs = [inp for inp in table_inputs if inp.is_displayed()]
 
         if not visible_inputs:
             return False, "Could not find any price inputs inside the rates table.", driver.get_screenshot_as_png()
