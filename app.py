@@ -928,12 +928,20 @@ elif page == "BestPriceSkipBins":
                             del _queue[_q_idx]
                             st.rerun()
 
-                # Result feedback per waste type
-                _new_results = st.session_state.get("bpsb_wt_new_results", [])
-                if _new_results:
-                    for _nr in _new_results:
-                        st.toast(_nr["msg"], icon="✅" if _nr["ok"] else "❌")
-                    st.session_state["bpsb_wt_new_results"] = []
+                # ── Last run summary banner ───────────────────────────────
+                _last_run = st.session_state.get("bpsb_last_run_summary", [])
+                if _last_run:
+                    st.markdown("#### 📋 Last Run Results")
+                    _ok_items  = [r for r in _last_run if r["ok"]]
+                    _err_items = [r for r in _last_run if not r["ok"]]
+                    if _ok_items:
+                        st.success("**Done:**\n" + "\n".join(f"- {r['msg']}" for r in _ok_items))
+                    if _err_items:
+                        st.error("**Failed:**\n" + "\n".join(f"- {r['msg']}" for r in _err_items))
+                    if st.button("✖ Clear results", key="bpsb_clear_results"):
+                        st.session_state["bpsb_last_run_summary"] = []
+                        st.rerun()
+                    st.markdown("---")
 
                 for _wt_i, _wt in enumerate(BPSB.WASTE_TYPES):
                     _prev = st.session_state.get(f"bpsb_wt_result_{_wt_i}")
@@ -954,7 +962,7 @@ elif page == "BestPriceSkipBins":
                     if not wt_updates:
                         result = {"ok": False, "msg": f"{wt}: No priced sizes < 7.5 m³ found."}
                         st.session_state[f"bpsb_wt_result_{idx}"] = result
-                        st.session_state.setdefault("bpsb_wt_new_results", []).append(result)
+                        st.session_state.setdefault("bpsb_last_run_summary", []).append(result)
                         return
                     ok, msg = BPSB.update_waste_type_rates(
                         _edit_acc["username"], _edit_acc["password"],
@@ -964,7 +972,7 @@ elif page == "BestPriceSkipBins":
                     )
                     result = {"ok": ok, "msg": f"{wt} — {msg}"}
                     st.session_state[f"bpsb_wt_result_{idx}"] = result
-                    st.session_state.setdefault("bpsb_wt_new_results", []).append(result)
+                    st.session_state.setdefault("bpsb_last_run_summary", []).append(result)
 
                 if _edit_acc:
                     import concurrent.futures
@@ -983,7 +991,7 @@ elif page == "BestPriceSkipBins":
                     if _run_queue_btn and _queue:
                         _items = list(_queue.items())
                         _wts_to_run = [(list(BPSB.WASTE_TYPES.keys())[i], v == "undo") for i, v in _items]
-                        st.session_state["bpsb_wt_new_results"] = []
+                        st.session_state["bpsb_last_run_summary"] = []
                         with st.spinner(f"Running {len(_wts_to_run)} queued item(s) in parallel…"):
                             with concurrent.futures.ThreadPoolExecutor(max_workers=len(_wts_to_run)) as _pool:
                                 _futures = [_pool.submit(_run_wt_edit, wt, undo) for wt, undo in _wts_to_run]
@@ -994,7 +1002,7 @@ elif page == "BestPriceSkipBins":
                     if _edit_all or _undo_all:
                         _is_undo_all = bool(_undo_all)
                         _all_wts = [wt for wt in BPSB.WASTE_TYPES if any(s in _orig_prices.get(wt, {}) for s in _bpsb_lt75)]
-                        st.session_state["bpsb_wt_new_results"] = []
+                        st.session_state["bpsb_last_run_summary"] = []
                         with st.spinner(f"{'Undo' if _is_undo_all else 'Edit'} All: {len(_all_wts)} waste types in parallel…"):
                             with concurrent.futures.ThreadPoolExecutor(max_workers=len(_all_wts)) as _pool:
                                 _futures = [_pool.submit(_run_wt_edit, wt, _is_undo_all) for wt in _all_wts]
