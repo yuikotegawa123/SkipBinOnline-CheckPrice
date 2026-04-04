@@ -390,12 +390,13 @@ def _update_single_row(driver, row_id: str, new_price: str, rates_url: str, edit
     if not visible_inputs:
         return False, f"Row {row_id}: could not find price inputs."
 
-    for inp in visible_inputs:
+    # Only update Base Price column + the first day column (2 inputs)
+    for inp in visible_inputs[:2]:
         inp.click()
         inp.send_keys(Keys.CONTROL + "a")
         inp.send_keys(new_price)
 
-    last_input = visible_inputs[-1]
+    last_input = visible_inputs[min(1, len(visible_inputs) - 1)]
     confirm_btn = None
     for by, sel in [
         (By.XPATH, ".//following::input[@type='image'][1]"),
