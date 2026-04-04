@@ -853,6 +853,9 @@ elif page == "BestPriceSkipBins":
 
             # Layout: Waste Type | 2m³ … 7m³ | ✏️ Edit | ↩️ Undo
             _col_widths = [2] + [1] * len(_bpsb_lt75) + [1, 1]
+            _hdr_cols = st.columns(_col_widths)
+            for _hi, _sz in enumerate(_bpsb_lt75):
+                _hdr_cols[1 + _hi].markdown(f"**{_sz} m³**")
 
             for _wt_i, _wt in enumerate(BPSB.WASTE_TYPES):
                 _row_cols = st.columns(_col_widths)
