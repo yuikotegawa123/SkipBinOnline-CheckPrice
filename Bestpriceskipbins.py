@@ -484,10 +484,13 @@ def update_multiple_rates(supplier_id: str, password: str,
         for size_str, new_price in updates:
             row_id = id_map.get(size_str)
             if row_id is None:
-                results.append(f"{size_str}m³: ❌ id not found (page has: {list(id_map.keys())})")
+                results.append(f"{size_str} m³: ❌ row not found (detected sizes: {list(id_map.keys())})")
                 continue
             ok, msg = _update_single_row(driver, row_id, new_price, rates_url, edit_delay)
-            results.append(msg)
+            if ok:
+                results.append(f"{size_str} m³ → ${new_price} ✓")
+            else:
+                results.append(f"{size_str} m³: ❌ {msg}")
 
         shot = driver.get_screenshot_as_png()
         all_ok = all("❌" not in r for r in results)
