@@ -852,15 +852,14 @@ elif page == "BestPriceSkipBins":
             _edit_acc = _matched[0] if _matched else None
 
             # HTML table (data only) + button columns to the right
+            # Sizes caption above the table (no <thead> so row count matches button count)
+            st.caption("Columns: " + "  |  ".join(f"{_sz} m³" for _sz in _bpsb_lt75))
+
             _tbl_col, _edit_col, _undo_col = st.columns([8, 1, 1])
 
             with _tbl_col:
-                _th = "border:1px solid #444;padding:7px 12px;text-align:left;white-space:nowrap;"
                 _td_wt = "border:1px solid #444;padding:7px 12px;white-space:nowrap;"
                 _td = "border:1px solid #444;padding:7px 12px;text-align:right;"
-                _hdrs = f"<th style='{_th}'>Waste Type</th>" + "".join(
-                    f"<th style='{_th}'>{_sz} m³</th>" for _sz in _bpsb_lt75
-                )
                 _rows_html = ""
                 for _wt in BPSB.WASTE_TYPES:
                     _cells = f"<td style='{_td_wt}'>{_wt}</td>"
@@ -871,7 +870,7 @@ elif page == "BestPriceSkipBins":
                     _rows_html += f"<tr>{_cells}</tr>"
                 st.markdown(
                     f"<table style='border-collapse:collapse;width:100%;font-size:0.9rem;'>"
-                    f"<thead><tr>{_hdrs}</tr></thead><tbody>{_rows_html}</tbody></table>",
+                    f"<tbody>{_rows_html}</tbody></table>",
                     unsafe_allow_html=True,
                 )
 
