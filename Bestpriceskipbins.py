@@ -44,33 +44,36 @@ BASE_URL = "https://bestpriceskipbins.com.au/bin-hire/"
 
 # waste_type IDs on this site
 WASTE_TYPE_IDS = {
-    "General Waste":                    1,
-    "Mixed Heavy Waste":                2,
-    "Concrete / Bricks":                3,
-    "Green Garden Waste":               4,
-    "Soil / Dirt":                      5,
-    "Mixed Heavy Waste (No Soil/Dirt)": 6,
+    "General Waste":                         1,
+    "Mixed Heavy Waste":                     2,
+    "Concrete / Bricks":                     3,
+    "Green Garden Waste":                    4,
+    "Soil / Dirt":                           5,
+    "Mixed Heavy Waste (No Soil/Dirt)":      6,
+    "Concrete / Dirt":                       7,
 }
 
 WASTE_TYPES = {
-    "General Waste":                    ["2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "14", "15", "16", "20", "25", "30"],
-    "Mixed Heavy Waste":                ["2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"],
-    "Concrete / Bricks":                ["2", "3", "4", "5", "6", "7", "8", "9", "10", "12"],
-    "Green Garden Waste":               ["2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "14", "15", "20", "25", "30"],
-    "Soil / Dirt":                      ["2", "3", "4", "5", "6", "7", "8", "9", "10", "12"],
-    "Mixed Heavy Waste (No Soil/Dirt)": ["2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "14"],
+    "General Waste":                         ["2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "14", "15", "16", "20", "25", "30"],
+    "Mixed Heavy Waste":                     ["2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"],
+    "Concrete / Bricks":                     ["2", "3", "4", "5", "6", "7", "8", "9", "10", "12"],
+    "Green Garden Waste":                    ["2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "14", "15", "20", "25", "30"],
+    "Soil / Dirt":                           ["2", "3", "4", "5", "6", "7", "8", "9", "10", "12"],
+    "Mixed Heavy Waste (No Soil/Dirt)":      ["2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "14"],
+    "Concrete / Dirt":                       ["2", "3", "4", "5", "6", "7", "8", "9", "10", "12"],
 }
 
 ALL_SIZES = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "14", "15", "16", "20", "25", "30"]
 
 # Supplier rates management URLs per waste type
 WASTE_TYPE_RATES_URLS = {
-    "General Waste":                    "https://bestpriceskipbins.com.au/supplier/rates_manage.php",
-    "Mixed Heavy Waste":                "https://bestpriceskipbins.com.au/supplier/rates_manage_mhw.php",
-    "Concrete / Bricks":                "https://bestpriceskipbins.com.au/supplier/rates_manage_conc.php",
-    "Green Garden Waste":               "https://bestpriceskipbins.com.au/supplier/rates_manage_green.php",
-    "Soil / Dirt":                      "https://bestpriceskipbins.com.au/supplier/rates_manage_dirt.php",
-    "Mixed Heavy Waste (No Soil/Dirt)": "https://bestpriceskipbins.com.au/supplier/rates_manage_mhwns.php",
+    "General Waste":                         "https://bestpriceskipbins.com.au/supplier/rates_manage.php",
+    "Mixed Heavy Waste":                     "https://bestpriceskipbins.com.au/supplier/rates_manage_mixedheavy.php",
+    "Concrete / Bricks":                     "https://bestpriceskipbins.com.au/supplier/rates_manage_clean.php",
+    "Green Garden Waste":                    "https://bestpriceskipbins.com.au/supplier/rates_manage_green.php",
+    "Soil / Dirt":                           "https://bestpriceskipbins.com.au/supplier/rates_manage_dirt.php",
+    "Mixed Heavy Waste (No Soil/Dirt)":      "https://bestpriceskipbins.com.au/supplier/rates_manage_mixedheavynosoildirt.php",
+    "Concrete / Dirt":                       "https://bestpriceskipbins.com.au/supplier/rates_manage_concrete_dirt.php",
 }
 
 _SESSION = requests.Session()
