@@ -338,7 +338,7 @@ def _get_row_id_map(driver, rates_url: str, min_date: str = None) -> dict:
 
     nav_url = rates_url + (f"?min_date={min_date}" if min_date else "")
     driver.get(nav_url)
-    time.sleep(2)
+    time.sleep(3)
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
     id_map = {}
@@ -369,6 +369,23 @@ def _get_row_id_map(driver, rates_url: str, min_date: str = None) -> dict:
                 else:
                     continue
                 break
+
+    # Fallback: scan ALL links on the page for ?action=edit&id=N patterns
+    # and try to match them to sizes found in surrounding text
+    if not id_map:
+        for a in soup.find_all("a", href=True):
+            m = re.search(r"action=edit[^&]*&(?:amp;)?id=(\d+)", a["href"])
+            if not m:
+                continue
+            row_id = m.group(1)
+            # look for a size in the closest ancestor row
+            tr = a.find_parent("tr")
+            if not tr:
+                continue
+            row_text = tr.get_text(" ", strip=True)
+            sm = re.search(r"\b(\d+(?:\.\d+)?)\s*(?:cubic|m³|m3)", row_text, re.IGNORECASE)
+            if sm and sm.group(1) not in id_map:
+                id_map[sm.group(1)] = row_id
 
     return id_map
 
@@ -494,6 +511,17 @@ def update_multiple_rates(supplier_id: str, password: str,
 
         # Auto-detect size → row_id mapping from the live page
         id_map = _get_row_id_map(driver, rates_url, min_date=min_date)
+
+        if not id_map:
+            # Diagnose: capture page title/URL to surface in error
+            page_title = driver.title
+            current_url = driver.current_url
+            shot = driver.get_screenshot_as_png()
+            return False, (
+                f"Could not detect any row IDs on the rates page. "
+                f"Page title: '{page_title}' | URL: {current_url} — "
+                f"The supplier may not be logged in, or the page structure has changed."
+            ), shot
 
         for size_str, new_price in updates:
             row_id = id_map.get(size_str)
