@@ -215,14 +215,41 @@ def login(supplier_id: str, password: str, login_delay: float = 5.0):
     login_delay : seconds to wait after clicking Login before taking the screenshot.
     Returns (success: bool, message: str, screenshot: bytes | None).
     """
-    import time
+    driver = _make_screenshot_driver()
+    try:
+        ok, msg = _do_login(driver, supplier_id, password, login_delay)
+        shot = driver.get_screenshot_as_png()
+        if not ok:
+            return False, msg, shot
+        src = driver.page_source.lower()
+        if any(k in src for k in ("log out", "logout", "sign out", "welcome", "dashboard", "my account", "supplier dashboard")):
+            return True, "Logged in successfully!", shot
+        if any(k in src for k in ("invalid", "incorrect", "error", "failed", "wrong password")):
+            return False, "Login failed — invalid credentials.", shot
+        return True, "Login submitted — see screenshot.", shot
+    except Exception as exc:
+        try:
+            shot = driver.get_screenshot_as_png()
+        except Exception:
+            shot = None
+        return False, f"Error during login: {exc}", shot
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Supplier rate price updater  (Selenium)
+# ---------------------------------------------------------------------------
+
+def _make_screenshot_driver():
+    """Build a Chrome driver with images enabled (for login/screenshot use)."""
     from Bookabin import _bundled_chrome_paths
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
     from selenium.webdriver.chrome.service import Service
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
 
     chrome_bin, driver_bin = _bundled_chrome_paths()
     opts = Options()
@@ -240,72 +267,131 @@ def login(supplier_id: str, password: str, login_delay: float = 5.0):
     opts.add_argument("--window-size=1280,900")
     opts.add_argument("--log-level=3")
     opts.add_experimental_option("excludeSwitches", ["enable-logging"])
-    # Do NOT disable images — we want a full visual screenshot
     opts.page_load_strategy = 'normal'
-
     service = Service(executable_path=driver_bin) if driver_bin else Service()
-    driver = webdriver.Chrome(service=service, options=opts)
+    return webdriver.Chrome(service=service, options=opts)
+
+
+def _do_login(driver, supplier_id: str, password: str, login_delay: float):
+    """Perform login on the driver. Returns (success, message)."""
+    import time
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+
+    driver.get("https://bestpriceskipbins.com.au/supplier/")
+    wait = WebDriverWait(driver, 15)
+    pwd_input = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']")))
+
     try:
-        driver.get("https://bestpriceskipbins.com.au/supplier/")
+        user_input = driver.find_element(
+            By.XPATH,
+            "//input[@type='password']/preceding::input[@type='text' or @type='number' or @type='tel'][1]",
+        )
+    except Exception:
+        inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[type='number'], input[type='tel']")
+        user_input = inputs[-1] if inputs else None
+
+    if user_input is None:
+        return False, "Could not find Supplier ID input field."
+
+    user_input.clear()
+    user_input.send_keys(supplier_id)
+    pwd_input.clear()
+    pwd_input.send_keys(password)
+
+    try:
+        login_btn = wait.until(EC.element_to_be_clickable(
+            (By.XPATH,
+             "//input[@type='submit'] | //button[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'LOGIN')]")
+        ))
+    except Exception:
+        login_btn = driver.find_element(By.XPATH, "//input[@type='submit']")
+
+    driver.execute_script("arguments[0].click();", login_btn)
+    time.sleep(login_delay)
+
+    src = driver.page_source.lower()
+    if any(k in src for k in ("invalid", "incorrect", "error", "failed", "wrong password")):
+        return False, "Login failed — invalid credentials."
+    return True, "Logged in."
+
+
+def update_rate_price(supplier_id: str, password: str, row_id: str, new_price: str,
+                      login_delay: float = 5.0, edit_delay: float = 5.0):
+    """
+    Log in, navigate to the rates edit page for row_id (General Waste rates_manage.php),
+    update the Base Price input to new_price, click the confirm (✓) button.
+
+    Returns (success: bool, message: str, screenshot: bytes | None).
+    """
+    import time
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+
+    edit_url = (
+        f"https://bestpriceskipbins.com.au/supplier/rates_manage.php"
+        f"?action=edit&id={row_id}#admin_form"
+    )
+    driver = _make_screenshot_driver()
+    try:
+        # --- Login ---
+        ok, msg = _do_login(driver, supplier_id, password, login_delay)
+        if not ok:
+            return False, msg, driver.get_screenshot_as_png()
+
+        # --- Navigate to edit URL ---
+        driver.get(edit_url)
+        time.sleep(edit_delay)
+
         wait = WebDriverWait(driver, 15)
 
-        # Wait for the password field
-        pwd_input = wait.until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']"))
-        )
+        # --- Find the Base Price input ---
+        # After ?action=edit&id=N the targeted row is in edit mode.
+        # The Base Price cell becomes the first visible text input in the table.
+        all_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
+        price_input = next((inp for inp in all_inputs if inp.is_displayed()), None)
 
-        # Supplier ID input — find the text/number input immediately before the password field
-        try:
-            user_input = driver.find_element(
-                By.XPATH,
-                "//input[@type='password']/preceding::input[@type='text' or @type='number' or @type='tel'][1]",
-            )
-        except Exception:
-            inputs = driver.find_elements(
-                By.CSS_SELECTOR, "input[type='text'], input[type='number'], input[type='tel']"
-            )
-            user_input = inputs[-1] if inputs else None
+        if price_input is None:
+            return False, "Could not find price input on edit page.", driver.get_screenshot_as_png()
 
-        if user_input is None:
-            shot = driver.get_screenshot_as_png()
-            return False, "Could not find the Supplier ID input field on the page.", shot
+        driver.execute_script("arguments[0].focus();", price_input)
+        driver.execute_script("arguments[0].value = '';", price_input)
+        price_input.clear()
+        price_input.send_keys(new_price)
 
-        user_input.clear()
-        user_input.send_keys(supplier_id)
-        pwd_input.clear()
-        pwd_input.send_keys(password)
+        # --- Find confirm (✓) button ---
+        confirm_btn = None
+        for by, sel in [
+            (By.XPATH, "//input[@type='text'][1]/following::input[@type='image'][1]"),
+            (By.XPATH, "//input[@type='text'][1]/following::button[1]"),
+            (By.XPATH, "//input[@type='text'][1]/following::input[@type='submit'][1]"),
+            (By.XPATH, "//*[@title='Save' or @title='Confirm' or @alt='Save' or @alt='Ok'][1]"),
+        ]:
+            try:
+                el = driver.find_element(by, sel)
+                if el.is_displayed():
+                    confirm_btn = el
+                    break
+            except Exception:
+                continue
 
-        # Click "Login Now!" — try submit input first, then any login button
-        try:
-            login_btn = wait.until(
-                EC.element_to_be_clickable(
-                    (By.XPATH,
-                     "//input[@type='submit'] | //button[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'LOGIN')]")
-                )
-            )
-        except Exception:
-            # fallback: any clickable submit-ish element
-            login_btn = driver.find_element(By.XPATH, "//input[@type='submit']")
+        if confirm_btn is None:
+            return False, "Could not find the confirm (✓) button.", driver.get_screenshot_as_png()
 
-        driver.execute_script("arguments[0].click();", login_btn)
-        time.sleep(login_delay)
+        driver.execute_script("arguments[0].click();", confirm_btn)
+        time.sleep(2)
 
         shot = driver.get_screenshot_as_png()
-        src  = driver.page_source.lower()
-
-        if any(k in src for k in ("log out", "logout", "sign out", "welcome", "dashboard", "my account", "supplier dashboard")):
-            return True, "Logged in successfully!", shot
-        if any(k in src for k in ("invalid", "incorrect", "error", "failed", "wrong password")):
-            return False, "Login failed — invalid credentials.", shot
-        # Unknown result — return screenshot for manual inspection
-        return True, "Login submitted — see screenshot.", shot
+        return True, f"Price updated to {new_price} successfully!", shot
 
     except Exception as exc:
         try:
             shot = driver.get_screenshot_as_png()
         except Exception:
             shot = None
-        return False, f"Error during login: {exc}", shot
+        return False, f"Error during price update: {exc}", shot
     finally:
         try:
             driver.quit()

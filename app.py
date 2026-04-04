@@ -702,7 +702,7 @@ elif page == "BestPriceSkipBins":
     st.title("💰 BestPriceSkipBins")
     st.markdown("---")
 
-    bpsb_tab_prices, bpsb_tab_signin = st.tabs(["🔍 Check Price", "🔐 Sign In Information"])
+    bpsb_tab_prices, bpsb_tab_signin, bpsb_tab_rates = st.tabs(["🔍 Check Price", "🔐 Sign In Information", "✏️ Update Rates"])
 
     # -----------------------------------------------------------------------
     # Sub-tab: Check Price
@@ -941,6 +941,76 @@ elif page == "BestPriceSkipBins":
                     st.error(f"❌ {_msg}")
                 if _shot:
                     st.image(_shot, caption=f"Screenshot — {_login_acc['label']} ({_login_user})", use_container_width=True)
+
+    # -----------------------------------------------------------------------
+    # Sub-tab: Update Rates
+    # -----------------------------------------------------------------------
+    with bpsb_tab_rates:
+        st.subheader("✏️ Update Rates — bestpriceskipbins.com.au")
+        st.caption("Log in and update a Base Price cell on the rates schedule.")
+        st.markdown("---")
+
+        _rate_acc_labels = [f"Account {i+1} ({bpsb_accounts[i].get('username') or 'not set'})" for i in range(3)]
+        _rate_sel = st.selectbox("Account", _rate_acc_labels, key="bpsb_rate_acc_sel")
+        _rate_idx = int(_rate_sel.split()[1]) - 1
+
+        _rate_waste_urls = {
+            "General Waste":                    "https://bestpriceskipbins.com.au/supplier/rates_manage.php",
+            "Mixed Heavy Waste":                "https://bestpriceskipbins.com.au/supplier/rates_manage_mhw.php",
+            "Mixed Heavy Waste (No Soil/Dirt)": "https://bestpriceskipbins.com.au/supplier/rates_manage_mhwns.php",
+            "Concrete / Bricks":                "https://bestpriceskipbins.com.au/supplier/rates_manage_conc.php",
+            "Green Waste":                      "https://bestpriceskipbins.com.au/supplier/rates_manage_green.php",
+            "Dirt / Soil":                      "https://bestpriceskipbins.com.au/supplier/rates_manage_dirt.php",
+        }
+        _rate_waste = st.selectbox("Waste Type", list(_rate_waste_urls.keys()), key="bpsb_rate_waste")
+
+        _rate_row_id = st.text_input(
+            "Row ID (id= parameter)",
+            value="1",
+            key="bpsb_rate_row_id",
+            help="The 'id' value in ?action=edit&id=N. id=1 is typically the first bin size (2 cubic metres).",
+        )
+        _rate_new_price = st.text_input("New Base Price ($)", value="189", key="bpsb_rate_price")
+
+        _rate_r1, _rate_r2 = st.columns(2)
+        with _rate_r1:
+            _rate_login_delay = st.slider(
+                "⏱️ Login delay (s)", min_value=2, max_value=20, value=6, step=1, key="bpsb_rate_login_delay"
+            )
+        with _rate_r2:
+            _rate_edit_delay = st.slider(
+                "⏱️ Edit page delay (s)", min_value=2, max_value=20, value=5, step=1, key="bpsb_rate_edit_delay"
+            )
+
+        _rate_btn = st.button("✏️ Update Price", type="primary", key="bpsb_rate_btn")
+
+        if _rate_btn:
+            _racc = bpsb_accounts[_rate_idx]
+            _ruser = _racc.get("username", "")
+            _rpwd  = _racc.get("password", "")
+            if not _ruser or not _rpwd:
+                st.error(f"❌ {_racc['label']} has no username or password set. Fill them in the Sign In tab first.")
+            elif not _rate_row_id.strip():
+                st.error("❌ Please enter a Row ID.")
+            elif not _rate_new_price.strip():
+                st.error("❌ Please enter the new price.")
+            else:
+                with st.spinner(
+                    f"✏️ Logging in as {_racc['label']} and updating row {_rate_row_id} → ${_rate_new_price}…"
+                ):
+                    _rok, _rmsg, _rshot = BPSB.update_rate_price(
+                        _ruser, _rpwd,
+                        row_id=_rate_row_id.strip(),
+                        new_price=_rate_new_price.strip(),
+                        login_delay=_rate_login_delay,
+                        edit_delay=_rate_edit_delay,
+                    )
+                if _rok:
+                    st.success(f"✅ {_rmsg}")
+                else:
+                    st.error(f"❌ {_rmsg}")
+                if _rshot:
+                    st.image(_rshot, caption=f"Screenshot after update — row {_rate_row_id}", use_container_width=True)
 
 # ===========================================================================
 # PAGE: SkipBinFinder Sign In
