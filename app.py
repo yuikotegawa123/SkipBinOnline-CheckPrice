@@ -57,6 +57,7 @@ def _parse_bpsb_date(d_slash: str) -> str:
 
 _CACHE_DIR     = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
 _BAB_CACHE     = os.path.join(_CACHE_DIR, "bab_results.json")
+_BPSB_CACHE    = os.path.join(_CACHE_DIR, "bpsb_results.json")
 
 _DEFAULT_ACCOUNTS = [
     {"label": "Account 1", "supplier_id": "", "password": "", "postcode": "3173"},
@@ -177,6 +178,14 @@ if "bab_results" not in st.session_state:
         st.session_state["bab_search_pc"]  = _cached.get("pc", "")
         st.session_state["bab_search_dod"] = _cached.get("dod", "")
         st.session_state["bab_search_pud"] = _cached.get("pud", "")
+
+if "bpsb_results" not in st.session_state:
+    _cached_bpsb = _load_cache(_BPSB_CACHE)
+    if _cached_bpsb:
+        st.session_state["bpsb_results"]    = _cached_bpsb.get("results", {})
+        st.session_state["bpsb_search_pc"]  = _cached_bpsb.get("pc", "")
+        st.session_state["bpsb_search_dod"] = _cached_bpsb.get("dod", "")
+        st.session_state["bpsb_search_pud"] = _cached_bpsb.get("pud", "")
 
 # Restore saved accounts — Gist only (no local cache to avoid conflicts)
 if "bab_accounts" not in st.session_state:
@@ -664,14 +673,106 @@ elif page == "BookABin":
                         st.rerun()
 
 # ===========================================================================
-# PAGE: BestPriceSkipBins Sign In
+# PAGE: BestPriceSkipBins
 # ===========================================================================
 
 elif page == "BestPriceSkipBins":
-    st.title("💰 BestPriceSkipBins — Supplier Sign In")
-    st.markdown("Log in to your BestPriceSkipBins supplier account.")
+    st.title("💰 BestPriceSkipBins")
     st.markdown("---")
-    st.info("Login automation for BestPriceSkipBins is not yet configured.")
+
+    st.subheader("Check Prices — bestpriceskipbins.com.au")
+    st.caption("Search live prices from BestPriceSkipBins for your postcode and hire period.")
+
+    bpsb_col1, bpsb_col2, bpsb_col3, bpsb_col4 = st.columns([1, 1.4, 1.4, 1])
+    with bpsb_col1:
+        bpsb_postcode = st.text_input("Postcode", value="3173", key="bpsb_pc")
+    with bpsb_col2:
+        bpsb_dod_raw = st.text_input("Delivery Date (D/MM/YYYY)", value="1/04/2026", key="bpsb_dod")
+    with bpsb_col3:
+        bpsb_pud_raw = st.text_input("Pickup Date (D/MM/YYYY)", value="8/04/2026", key="bpsb_pud")
+    with bpsb_col4:
+        st.write("")
+        st.write("")
+        bpsb_search = st.button("🔍 Search BestPriceSkipBins", use_container_width=True, type="primary", key="bpsb_search")
+
+    if bpsb_search:
+        if not bpsb_postcode or not bpsb_dod_raw or not bpsb_pud_raw:
+            st.error("Please fill in all fields.")
+            st.stop()
+
+        bpsb_dod = _parse_bpsb_date(bpsb_dod_raw)
+        bpsb_pud = _parse_bpsb_date(bpsb_pud_raw)
+
+        def _run_bpsb(run_fn, *args):
+            cell_q   = queue.Queue()
+            status_q = queue.Queue()
+            done     = threading.Event()
+            threading.Thread(target=run_fn, args=(*args, cell_q, status_q, done), daemon=True).start()
+            done.wait()
+            out = {}
+            while not cell_q.empty():
+                wt, size, price = cell_q.get_nowait()
+                out.setdefault(wt, {})[size] = price
+            return out
+
+        with st.spinner("🔍 Fetching prices from BestPriceSkipBins… (this may take a minute)"):
+            _fetched = _run_bpsb(BPSB.run_search, bpsb_postcode, bpsb_dod, bpsb_pud)
+
+        if not _fetched:
+            st.warning("No data returned from BestPriceSkipBins. Check the postcode and dates, then try again.")
+            st.session_state.pop("bpsb_results", None)
+        else:
+            st.session_state["bpsb_results"]    = _fetched
+            st.session_state["bpsb_search_pc"]  = bpsb_postcode
+            st.session_state["bpsb_search_dod"] = bpsb_dod_raw
+            st.session_state["bpsb_search_pud"] = bpsb_pud_raw
+            _save_cache(_BPSB_CACHE, {
+                "results": _fetched,
+                "pc":      bpsb_postcode,
+                "dod":     bpsb_dod_raw,
+                "pud":     bpsb_pud_raw,
+            })
+
+    # ── Render from session_state (persists across tab switches) ──
+    if "bpsb_results" in st.session_state:
+        bpsb_results  = st.session_state["bpsb_results"]
+        saved_pc  = st.session_state.get("bpsb_search_pc", "")
+        saved_dod = st.session_state.get("bpsb_search_dod", "")
+        saved_pud = st.session_state.get("bpsb_search_pud", "")
+
+        st.success(
+            f"✅ Done — Postcode **{saved_pc}**  |  {saved_dod} → {saved_pud}  |  BestPriceSkipBins prices loaded."
+        )
+
+        # --- Cheapest price highlight ---
+        st.subheader("💰 Cheapest Available Price")
+        cheapest_price = None
+        cheapest_wt    = None
+        cheapest_size  = None
+        for wt, sizes in bpsb_results.items():
+            for sz, pr in sizes.items():
+                if isinstance(pr, (int, float)):
+                    if cheapest_price is None or pr < cheapest_price:
+                        cheapest_price = pr
+                        cheapest_wt    = wt
+                        cheapest_size  = sz
+
+        if cheapest_price is not None:
+            ch_col1, ch_col2, ch_col3 = st.columns(3)
+            ch_col1.metric("Waste Type", cheapest_wt)
+            ch_col2.metric("Bin Size",   f"{cheapest_size} m³")
+            ch_col3.metric("Best Price", f"${cheapest_price:,.0f}")
+        else:
+            st.info("No priced results found for this postcode / date range.")
+
+        st.markdown("---")
+
+        # --- Single combined table: all waste types × all cube sizes ---
+        st.subheader("📋 All Prices — All Sizes")
+        st.dataframe(
+            _to_df(bpsb_results, BPSB.WASTE_TYPES, BPSB.ALL_SIZES),
+            use_container_width=True,
+        )
 
 # ===========================================================================
 # PAGE: SkipBinFinder Sign In
