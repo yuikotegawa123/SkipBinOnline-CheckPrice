@@ -216,13 +216,35 @@ def login(supplier_id: str, password: str, login_delay: float = 5.0):
     Returns (success: bool, message: str, screenshot: bytes | None).
     """
     import time
-    from Bookabin import make_driver
+    from Bookabin import _bundled_chrome_paths
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
 
-    driver = make_driver()
-    driver.set_window_size(1280, 900)
+    chrome_bin, driver_bin = _bundled_chrome_paths()
+    opts = Options()
+    if chrome_bin:
+        opts.binary_location = chrome_bin
+    opts.add_argument("--headless=new")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--disable-extensions")
+    opts.add_argument("--disable-default-apps")
+    opts.add_argument("--no-first-run")
+    opts.add_argument("--disable-sync")
+    opts.add_argument("--disable-background-networking")
+    opts.add_argument("--window-size=1280,900")
+    opts.add_argument("--log-level=3")
+    opts.add_experimental_option("excludeSwitches", ["enable-logging"])
+    # Do NOT disable images — we want a full visual screenshot
+    opts.page_load_strategy = 'normal'
+
+    service = Service(executable_path=driver_bin) if driver_bin else Service()
+    driver = webdriver.Chrome(service=service, options=opts)
     try:
         driver.get("https://bestpriceskipbins.com.au/supplier/")
         wait = WebDriverWait(driver, 15)
