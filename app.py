@@ -968,10 +968,10 @@ elif page == "BestPriceSkipBins":
         st.caption("Leave a field blank to skip that size. Sizes are updated in order, one login session.")
 
         # (bin size label, sequential row id on the rates page)
-        _lt75_sizes = [("2", 1), ("3", 2), ("4", 3), ("5", 4), ("6", 5), ("7", 6)]
+        _lt75_sizes = ["2", "3", "4", "5", "6", "7"]
         _price_inputs = {}
         _size_cols = st.columns(3)
-        for _ci, (sz, rid) in enumerate(_lt75_sizes):
+        for _ci, sz in enumerate(_lt75_sizes):
             with _size_cols[_ci % 3]:
                 _price_inputs[sz] = st.text_input(
                     f"{sz} m³",
@@ -1001,8 +1001,8 @@ elif page == "BestPriceSkipBins":
                 st.error(f"❌ {_racc['label']} has no username or password set. Fill them in the Sign In tab first.")
             else:
                 _updates = [
-                    (str(rid), _price_inputs[sz].strip())
-                    for sz, rid in _lt75_sizes
+                    (sz, _price_inputs[sz].strip())
+                    for sz in _lt75_sizes
                     if _price_inputs[sz].strip()
                 ]
                 if not _updates:
@@ -1010,7 +1010,7 @@ elif page == "BestPriceSkipBins":
                 else:
                     _summary_preview = "  |  ".join(
                         f"{sz} m³ → ${_price_inputs[sz].strip()}"
-                        for sz, rid in _lt75_sizes if _price_inputs[sz].strip()
+                        for sz in _lt75_sizes if _price_inputs[sz].strip()
                     )
                     with st.spinner(
                         f"✏️ Logging in as {_racc['label']} and updating {len(_updates)} size(s): {_summary_preview}…"

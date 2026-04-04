@@ -317,6 +317,51 @@ def _do_login(driver, supplier_id: str, password: str, login_delay: float):
     return True, "Logged in."
 
 
+def _get_row_id_map(driver, rates_url: str) -> dict:
+    """
+    Load the rates page and return a dict mapping bin size string to row id string.
+    e.g. {"2": "1", "3": "2", "5": "7", ...}
+    Row IDs are read from the edit pencil links (?action=edit&id=N).
+    """
+    import re
+    import time
+
+    driver.get(rates_url)
+    time.sleep(2)
+
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+    id_map = {}
+    current_size = None
+
+    for row in soup.find_all("tr"):
+        # Bin-size header cell has rowspan > 1, text like "2 cubic metres"
+        for td in row.find_all("td"):
+            try:
+                if int(td.get("rowspan", 1)) > 1:
+                    m = re.match(r"(\d+(?:\.\d+)?)\s*cubic", td.get_text(strip=True).lower())
+                    if m:
+                        current_size = m.group(1)
+            except (ValueError, TypeError):
+                pass
+
+        if current_size and current_size not in id_map:
+            for tag in row.find_all(True):
+                for attr in ("href", "onclick"):
+                    val = tag.get(attr, "")
+                    m = re.search(
+                        r"action=edit[^&]*&(?:amp;)?id=(\d+)|[?&]id=(\d+)[^&]*&(?:amp;)?action=edit",
+                        val,
+                    )
+                    if m:
+                        id_map[current_size] = m.group(1) or m.group(2)
+                        break
+                else:
+                    continue
+                break
+
+    return id_map
+
+
 def _update_single_row(driver, row_id: str, new_price: str, rates_url: str, edit_delay: float):
     """
     Navigate to the edit URL for row_id, fill all Price row inputs with new_price,
@@ -421,7 +466,8 @@ def update_multiple_rates(supplier_id: str, password: str,
                           login_delay: float = 5.0, edit_delay: float = 3.0):
     """
     Log in ONCE then update multiple rows sequentially.
-    updates : list of (row_id_str, new_price_str) tuples.
+    updates : list of (size_str, new_price_str) e.g. [("2", "189"), ("3", "308")].
+    Row IDs are auto-detected from the rates page — no hardcoding needed.
     Returns (success, message, screenshot).
     """
     driver = _make_screenshot_driver()
@@ -431,12 +477,19 @@ def update_multiple_rates(supplier_id: str, password: str,
         if not ok:
             return False, msg, driver.get_screenshot_as_png()
 
-        for row_id, new_price in updates:
+        # Auto-detect size → row_id mapping from the live page
+        id_map = _get_row_id_map(driver, rates_url)
+
+        for size_str, new_price in updates:
+            row_id = id_map.get(size_str)
+            if row_id is None:
+                results.append(f"{size_str}m³: ❌ id not found (page has: {list(id_map.keys())})")
+                continue
             ok, msg = _update_single_row(driver, row_id, new_price, rates_url, edit_delay)
             results.append(msg)
 
         shot = driver.get_screenshot_as_png()
-        all_ok = all("✓" in r for r in results)
+        all_ok = all("❌" not in r for r in results)
         summary = "  |  ".join(results)
         return all_ok, summary, shot
 
