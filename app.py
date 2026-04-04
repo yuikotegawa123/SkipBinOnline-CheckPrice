@@ -947,7 +947,7 @@ elif page == "BestPriceSkipBins":
     # -----------------------------------------------------------------------
     with bpsb_tab_rates:
         st.subheader("✏️ Update Rates — bestpriceskipbins.com.au")
-        st.caption("Log in and update a Base Price cell on the rates schedule.")
+        st.caption("Log in once and update all bin sizes under 7.5 m³ in a single run.")
         st.markdown("---")
 
         _rate_acc_labels = [f"Account {i+1} ({bpsb_accounts[i].get('username') or 'not set'})" for i in range(3)]
@@ -964,13 +964,21 @@ elif page == "BestPriceSkipBins":
         }
         _rate_waste = st.selectbox("Waste Type", list(_rate_waste_urls.keys()), key="bpsb_rate_waste")
 
-        _rate_row_id = st.text_input(
-            "Row ID (id= parameter)",
-            value="1",
-            key="bpsb_rate_row_id",
-            help="The 'id' value in ?action=edit&id=N. id=1 is typically the first bin size (2 cubic metres).",
-        )
-        _rate_new_price = st.text_input("New Base Price ($)", value="189", key="bpsb_rate_price")
+        st.markdown("##### Enter new prices for bin sizes < 7.5 m³")
+        st.caption("Leave a field blank to skip that size. Sizes are updated in order, one login session.")
+
+        # (bin size label, sequential row id on the rates page)
+        _lt75_sizes = [("2", 1), ("3", 2), ("4", 3), ("5", 4), ("6", 5), ("7", 6)]
+        _price_inputs = {}
+        _size_cols = st.columns(3)
+        for _ci, (sz, rid) in enumerate(_lt75_sizes):
+            with _size_cols[_ci % 3]:
+                _price_inputs[sz] = st.text_input(
+                    f"{sz} m³",
+                    value="",
+                    key=f"bpsb_rate_price_{sz}",
+                    placeholder="e.g. 189",
+                )
 
         _rate_r1, _rate_r2 = st.columns(2)
         with _rate_r1:
@@ -979,10 +987,11 @@ elif page == "BestPriceSkipBins":
             )
         with _rate_r2:
             _rate_edit_delay = st.slider(
-                "⏱️ Edit page delay (s)", min_value=2, max_value=20, value=5, step=1, key="bpsb_rate_edit_delay"
+                "⏱️ Per-row delay (s)", min_value=1, max_value=10, value=3, step=1, key="bpsb_rate_edit_delay",
+                help="Wait time after navigating to each row's edit page before interacting."
             )
 
-        _rate_btn = st.button("✏️ Update Price", type="primary", key="bpsb_rate_btn")
+        _rate_btn = st.button("✏️ Update All Sizes < 7.5 m³", type="primary", key="bpsb_rate_btn")
 
         if _rate_btn:
             _racc = bpsb_accounts[_rate_idx]
@@ -990,27 +999,35 @@ elif page == "BestPriceSkipBins":
             _rpwd  = _racc.get("password", "")
             if not _ruser or not _rpwd:
                 st.error(f"❌ {_racc['label']} has no username or password set. Fill them in the Sign In tab first.")
-            elif not _rate_row_id.strip():
-                st.error("❌ Please enter a Row ID.")
-            elif not _rate_new_price.strip():
-                st.error("❌ Please enter the new price.")
             else:
-                with st.spinner(
-                    f"✏️ Logging in as {_racc['label']} and updating row {_rate_row_id} → ${_rate_new_price}…"
-                ):
-                    _rok, _rmsg, _rshot = BPSB.update_rate_price(
-                        _ruser, _rpwd,
-                        row_id=_rate_row_id.strip(),
-                        new_price=_rate_new_price.strip(),
-                        login_delay=_rate_login_delay,
-                        edit_delay=_rate_edit_delay,
-                    )
-                if _rok:
-                    st.success(f"✅ {_rmsg}")
+                _updates = [
+                    (str(rid), _price_inputs[sz].strip())
+                    for sz, rid in _lt75_sizes
+                    if _price_inputs[sz].strip()
+                ]
+                if not _updates:
+                    st.warning("⚠️ Enter at least one price before updating.")
                 else:
-                    st.error(f"❌ {_rmsg}")
-                if _rshot:
-                    st.image(_rshot, caption=f"Screenshot after update — row {_rate_row_id}", use_container_width=True)
+                    _summary_preview = "  |  ".join(
+                        f"{sz} m³ → ${_price_inputs[sz].strip()}"
+                        for sz, rid in _lt75_sizes if _price_inputs[sz].strip()
+                    )
+                    with st.spinner(
+                        f"✏️ Logging in as {_racc['label']} and updating {len(_updates)} size(s): {_summary_preview}…"
+                    ):
+                        _rok, _rmsg, _rshot = BPSB.update_multiple_rates(
+                            _ruser, _rpwd,
+                            updates=_updates,
+                            rates_url=_rate_waste_urls[_rate_waste],
+                            login_delay=_rate_login_delay,
+                            edit_delay=_rate_edit_delay,
+                        )
+                    if _rok:
+                        st.success(f"✅ Done!  {_rmsg}")
+                    else:
+                        st.error(f"❌ {_rmsg}")
+                    if _rshot:
+                        st.image(_rshot, caption="Screenshot after all updates", use_container_width=True)
 
 # ===========================================================================
 # PAGE: SkipBinFinder Sign In

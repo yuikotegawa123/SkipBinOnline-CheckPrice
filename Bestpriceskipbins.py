@@ -317,104 +317,90 @@ def _do_login(driver, supplier_id: str, password: str, login_delay: float):
     return True, "Logged in."
 
 
-def update_rate_price(supplier_id: str, password: str, row_id: str, new_price: str,
-                      login_delay: float = 5.0, edit_delay: float = 5.0):
+def _update_single_row(driver, row_id: str, new_price: str, rates_url: str, edit_delay: float):
     """
-    Log in, navigate to the rates edit page for row_id (General Waste rates_manage.php),
-    update the Base Price input to new_price, click the confirm (✓) button.
-
-    Returns (success: bool, message: str, screenshot: bytes | None).
+    Navigate to the edit URL for row_id, fill all Price row inputs with new_price,
+    click the confirm button. Reuses an already-logged-in driver.
+    Returns (success: bool, message: str).
     """
     import time
     from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
     from selenium.webdriver.common.keys import Keys
 
-    edit_url = (
-        f"https://bestpriceskipbins.com.au/supplier/rates_manage.php"
-        f"?action=edit&id={row_id}"
+    edit_url = f"{rates_url}?action=edit&id={row_id}"
+    driver.get(edit_url)
+    time.sleep(edit_delay)
+
+    # Only inputs in the Price: row (not Stock)
+    price_row_inputs = driver.find_elements(
+        By.XPATH,
+        "//td[normalize-space(text())='Price:']/ancestor::tr[1]//input[@type='text']"
     )
+    visible_inputs = [inp for inp in price_row_inputs if inp.is_displayed()]
+
+    if not visible_inputs:
+        table_inputs = driver.find_elements(By.CSS_SELECTOR, "table input[type='text']")
+        visible_inputs = [inp for inp in table_inputs if inp.is_displayed()]
+
+    if not visible_inputs:
+        return False, f"Row {row_id}: could not find price inputs."
+
+    for inp in visible_inputs:
+        inp.click()
+        inp.send_keys(Keys.CONTROL + "a")
+        inp.send_keys(new_price)
+
+    last_input = visible_inputs[-1]
+    confirm_btn = None
+    for by, sel in [
+        (By.XPATH, ".//following::input[@type='image'][1]"),
+        (By.XPATH, ".//following::input[@type='submit'][1]"),
+        (By.XPATH, ".//following::button[1]"),
+    ]:
+        try:
+            el = last_input.find_element(by, sel)
+            if el.is_displayed():
+                confirm_btn = el
+                break
+        except Exception:
+            continue
+
+    if confirm_btn is None:
+        for by, sel in [
+            (By.CSS_SELECTOR, "table input[type='image']"),
+            (By.CSS_SELECTOR, "table input[type='submit']"),
+        ]:
+            els = driver.find_elements(by, sel)
+            for el in els:
+                if el.is_displayed():
+                    confirm_btn = el
+                    break
+            if confirm_btn:
+                break
+
+    if confirm_btn is None:
+        return False, f"Row {row_id}: could not find confirm (✓) button."
+
+    driver.execute_script("arguments[0].click();", confirm_btn)
+    time.sleep(2)
+    return True, f"Row {row_id} → ${new_price} ✓"
+
+
+def update_rate_price(supplier_id: str, password: str, row_id: str, new_price: str,
+                      rates_url: str = "https://bestpriceskipbins.com.au/supplier/rates_manage.php",
+                      login_delay: float = 5.0, edit_delay: float = 5.0):
+    """
+    Log in and update a single row. Returns (success, message, screenshot).
+    """
     driver = _make_screenshot_driver()
     try:
-        # --- Login ---
         ok, msg = _do_login(driver, supplier_id, password, login_delay)
         if not ok:
             return False, msg, driver.get_screenshot_as_png()
 
-        # --- Navigate to edit URL ---
-        driver.get(edit_url)
-        time.sleep(edit_delay)
-
-        # --- Find the Base Price input inside the rates TABLE only ---
-        # The page also has Extra Hireage inputs at the top — skip those.
-        # When ?action=edit&id=N is active, the targeted row's Base Price cell
-        # becomes an <input type="text"> inside the main rates <table>.
-        table_inputs = driver.find_elements(By.CSS_SELECTOR, "table input[type='text']")
-        price_input = next((inp for inp in table_inputs if inp.is_displayed()), None)
-
-        if price_input is None:
-            return False, "Could not find Base Price input inside the rates table.", driver.get_screenshot_as_png()
-
-        # Find only the Price row inputs (not Stock row).
-        # The Price row has a <td> with text "Price:" — grab inputs only from that <tr>.
-        price_row_inputs = driver.find_elements(
-            By.XPATH,
-            "//td[normalize-space(text())='Price:']/ancestor::tr[1]//input[@type='text']"
-        )
-        visible_inputs = [inp for inp in price_row_inputs if inp.is_displayed()]
-
-        if not visible_inputs:
-            # Fallback: all table inputs (old behaviour) if row structure differs
-            table_inputs = driver.find_elements(By.CSS_SELECTOR, "table input[type='text']")
-            visible_inputs = [inp for inp in table_inputs if inp.is_displayed()]
-
-        if not visible_inputs:
-            return False, "Could not find any price inputs inside the rates table.", driver.get_screenshot_as_png()
-
-        for inp in visible_inputs:
-            inp.click()
-            inp.send_keys(Keys.CONTROL + "a")
-            inp.send_keys(new_price)
-
-        # --- Find the confirm (✓) button relative to the last input in the row ---
-        last_input = visible_inputs[-1]
-        confirm_btn = None
-        for by, sel in [
-            (By.XPATH, ".//following::input[@type='image'][1]"),
-            (By.XPATH, ".//following::input[@type='submit'][1]"),
-            (By.XPATH, ".//following::button[1]"),
-        ]:
-            try:
-                el = last_input.find_element(by, sel)
-                if el.is_displayed():
-                    confirm_btn = el
-                    break
-            except Exception:
-                continue
-
-        # Fallback: any image/submit input visible on the page
-        if confirm_btn is None:
-            for by, sel in [
-                (By.CSS_SELECTOR, "table input[type='image']"),
-                (By.CSS_SELECTOR, "table input[type='submit']"),
-            ]:
-                els = driver.find_elements(by, sel)
-                for el in els:
-                    if el.is_displayed():
-                        confirm_btn = el
-                        break
-                if confirm_btn:
-                    break
-
-        if confirm_btn is None:
-            return False, "Could not find the confirm (✓) button.", driver.get_screenshot_as_png()
-
-        driver.execute_script("arguments[0].click();", confirm_btn)
-        time.sleep(2)
-
+        ok, msg = _update_single_row(driver, row_id, new_price, rates_url, edit_delay)
         shot = driver.get_screenshot_as_png()
-        return True, f"Price updated to {new_price} successfully!", shot
+        return ok, msg, shot
 
     except Exception as exc:
         try:
@@ -422,6 +408,45 @@ def update_rate_price(supplier_id: str, password: str, row_id: str, new_price: s
         except Exception:
             shot = None
         return False, f"Error during price update: {exc}", shot
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+
+def update_multiple_rates(supplier_id: str, password: str,
+                          updates: list,
+                          rates_url: str = "https://bestpriceskipbins.com.au/supplier/rates_manage.php",
+                          login_delay: float = 5.0, edit_delay: float = 3.0):
+    """
+    Log in ONCE then update multiple rows sequentially.
+    updates : list of (row_id_str, new_price_str) tuples.
+    Returns (success, message, screenshot).
+    """
+    driver = _make_screenshot_driver()
+    results = []
+    try:
+        ok, msg = _do_login(driver, supplier_id, password, login_delay)
+        if not ok:
+            return False, msg, driver.get_screenshot_as_png()
+
+        for row_id, new_price in updates:
+            ok, msg = _update_single_row(driver, row_id, new_price, rates_url, edit_delay)
+            results.append(msg)
+
+        shot = driver.get_screenshot_as_png()
+        all_ok = all("✓" in r for r in results)
+        summary = "  |  ".join(results)
+        return all_ok, summary, shot
+
+    except Exception as exc:
+        try:
+            shot = driver.get_screenshot_as_png()
+        except Exception:
+            shot = None
+        summary = ("  |  ".join(results) + f"  |  ERROR: {exc}").lstrip("  |  ")
+        return False, summary, shot
     finally:
         try:
             driver.quit()
