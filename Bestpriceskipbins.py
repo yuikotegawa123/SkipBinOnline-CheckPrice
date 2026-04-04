@@ -359,26 +359,26 @@ def _get_row_id_map(driver, rates_url: str, min_date: str = None) -> dict:
             for tag in row.find_all(True):
                 for attr in ("href", "onclick"):
                     val = tag.get(attr, "")
-                    m = re.search(
-                        r"action=edit[^&]*&(?:amp;)?id=(\d+)|[?&]id=(\d+)[^&]*&(?:amp;)?action=edit",
-                        val,
-                    )
-                    if m:
-                        id_map[current_size] = m.group(1) or m.group(2)
-                        break
+                    # Match href that contains both action=edit and id=N (in any order)
+                    if "action=edit" in val:
+                        m = re.search(r"[?&](?:amp;)?id=(\d+)", val)
+                        if m:
+                            id_map[current_size] = m.group(1)
+                            break
                 else:
                     continue
                 break
 
-    # Fallback: scan ALL links on the page for ?action=edit&id=N patterns
-    # and try to match them to sizes found in surrounding text
+    # Fallback: scan ALL links on the page for action=edit + id=N
     if not id_map:
         for a in soup.find_all("a", href=True):
-            m = re.search(r"action=edit[^&]*&(?:amp;)?id=(\d+)", a["href"])
+            href = a["href"]
+            if "action=edit" not in href:
+                continue
+            m = re.search(r"[?&](?:amp;)?id=(\d+)", href)
             if not m:
                 continue
             row_id = m.group(1)
-            # look for a size in the closest ancestor row
             tr = a.find_parent("tr")
             if not tr:
                 continue
