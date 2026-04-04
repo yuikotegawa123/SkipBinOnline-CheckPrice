@@ -906,6 +906,35 @@ elif page == "BestPriceSkipBins":
                         st.session_state["bpsb_acc_unlocked"] = bpsb_unlocked
                         st.rerun()
 
+        # -----------------------------------------------------------------------
+        # Login & Screenshot section
+        # -----------------------------------------------------------------------
+        st.markdown("---")
+        st.subheader("🌐 Login & Screenshot")
+        st.caption("Log in to bestpriceskipbins.com.au/supplier/ with a saved account and take a screenshot.")
+
+        _acc_labels = [f"Account {i+1} ({bpsb_accounts[i].get('username') or 'not set'})" for i in range(3)]
+        _sel_acc = st.selectbox("Select account to log in with", _acc_labels, key="bpsb_login_acc_sel")
+        _sel_idx = int(_sel_acc.split()[1]) - 1  # "Account 1..." → index 0
+
+        login_btn_main = st.button("🔑 Login & Take Screenshot", type="primary", key="bpsb_login_btn")
+
+        if login_btn_main:
+            _login_acc = bpsb_accounts[_sel_idx]
+            _login_user = _login_acc.get("username", "")
+            _login_pwd  = _login_acc.get("password", "")
+            if not _login_user or not _login_pwd:
+                st.error(f"❌ {_login_acc['label']} has no username or password set. Please fill them in above first.")
+            else:
+                with st.spinner(f"🔑 Logging in as {_login_acc['label']} ({_login_user})…"):
+                    _ok, _msg, _shot = BPSB.login(_login_user, _login_pwd)
+                if _ok:
+                    st.success(f"✅ {_msg}")
+                else:
+                    st.error(f"❌ {_msg}")
+                if _shot:
+                    st.image(_shot, caption=f"Screenshot — {_login_acc['label']} ({_login_user})", use_container_width=True)
+
 # ===========================================================================
 # PAGE: SkipBinFinder Sign In
 # ===========================================================================

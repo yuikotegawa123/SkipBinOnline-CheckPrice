@@ -203,3 +203,88 @@ def run_search(postcode, delivery_date, collection_date,
 
     _log(f"[BPSB] run_search done")
     done_event.set()
+
+
+# ---------------------------------------------------------------------------
+# Supplier login  (Selenium)
+# ---------------------------------------------------------------------------
+
+def login(supplier_id: str, password: str):
+    """
+    Log in to https://bestpriceskipbins.com.au/supplier/ using Selenium.
+    Returns (success: bool, message: str, screenshot: bytes | None).
+    """
+    import time
+    from Bookabin import make_driver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+
+    driver = make_driver()
+    driver.set_window_size(1280, 900)
+    try:
+        driver.get("https://bestpriceskipbins.com.au/supplier/")
+        wait = WebDriverWait(driver, 15)
+
+        # Wait for the password field
+        pwd_input = wait.until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']"))
+        )
+
+        # Supplier ID input — find the text/number input immediately before the password field
+        try:
+            user_input = driver.find_element(
+                By.XPATH,
+                "//input[@type='password']/preceding::input[@type='text' or @type='number' or @type='tel'][1]",
+            )
+        except Exception:
+            inputs = driver.find_elements(
+                By.CSS_SELECTOR, "input[type='text'], input[type='number'], input[type='tel']"
+            )
+            user_input = inputs[-1] if inputs else None
+
+        if user_input is None:
+            shot = driver.get_screenshot_as_png()
+            return False, "Could not find the Supplier ID input field on the page.", shot
+
+        user_input.clear()
+        user_input.send_keys(supplier_id)
+        pwd_input.clear()
+        pwd_input.send_keys(password)
+
+        # Click "Login Now!" — try submit input first, then any login button
+        try:
+            login_btn = wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH,
+                     "//input[@type='submit'] | //button[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'LOGIN')]")
+                )
+            )
+        except Exception:
+            # fallback: any clickable submit-ish element
+            login_btn = driver.find_element(By.XPATH, "//input[@type='submit']")
+
+        driver.execute_script("arguments[0].click();", login_btn)
+        time.sleep(3)
+
+        shot = driver.get_screenshot_as_png()
+        src  = driver.page_source.lower()
+
+        if any(k in src for k in ("log out", "logout", "sign out", "welcome", "dashboard", "my account", "supplier dashboard")):
+            return True, "Logged in successfully!", shot
+        if any(k in src for k in ("invalid", "incorrect", "error", "failed", "wrong password")):
+            return False, "Login failed — invalid credentials.", shot
+        # Unknown result — return screenshot for manual inspection
+        return True, "Login submitted — see screenshot.", shot
+
+    except Exception as exc:
+        try:
+            shot = driver.get_screenshot_as_png()
+        except Exception:
+            shot = None
+        return False, f"Error during login: {exc}", shot
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
