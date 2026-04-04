@@ -63,6 +63,16 @@ WASTE_TYPES = {
 
 ALL_SIZES = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "14", "15", "16", "20", "25", "30"]
 
+# Supplier rates management URLs per waste type
+WASTE_TYPE_RATES_URLS = {
+    "General Waste":                    "https://bestpriceskipbins.com.au/supplier/rates_manage.php",
+    "Mixed Heavy Waste":                "https://bestpriceskipbins.com.au/supplier/rates_manage_mhw.php",
+    "Concrete / Bricks":                "https://bestpriceskipbins.com.au/supplier/rates_manage_conc.php",
+    "Green Garden Waste":               "https://bestpriceskipbins.com.au/supplier/rates_manage_green.php",
+    "Soil / Dirt":                      "https://bestpriceskipbins.com.au/supplier/rates_manage_dirt.php",
+    "Mixed Heavy Waste (No Soil/Dirt)": "https://bestpriceskipbins.com.au/supplier/rates_manage_mhwns.php",
+}
+
 _SESSION = requests.Session()
 _SESSION.headers.update({
     "User-Agent": (
@@ -317,7 +327,7 @@ def _do_login(driver, supplier_id: str, password: str, login_delay: float):
     return True, "Logged in."
 
 
-def _get_row_id_map(driver, rates_url: str) -> dict:
+def _get_row_id_map(driver, rates_url: str, min_date: str = None) -> dict:
     """
     Load the rates page and return a dict mapping bin size string to row id string.
     e.g. {"2": "1", "3": "2", "5": "7", ...}
@@ -326,7 +336,8 @@ def _get_row_id_map(driver, rates_url: str) -> dict:
     import re
     import time
 
-    driver.get(rates_url)
+    nav_url = rates_url + (f"?min_date={min_date}" if min_date else "")
+    driver.get(nav_url)
     time.sleep(2)
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
@@ -362,7 +373,7 @@ def _get_row_id_map(driver, rates_url: str) -> dict:
     return id_map
 
 
-def _update_single_row(driver, row_id: str, new_price: str, rates_url: str, edit_delay: float):
+def _update_single_row(driver, row_id: str, new_price: str, rates_url: str, edit_delay: float, min_date: str = None):
     """
     Navigate to the edit URL for row_id, fill all Price row inputs with new_price,
     click the confirm button. Reuses an already-logged-in driver.
@@ -373,6 +384,8 @@ def _update_single_row(driver, row_id: str, new_price: str, rates_url: str, edit
     from selenium.webdriver.common.keys import Keys
 
     edit_url = f"{rates_url}?action=edit&id={row_id}"
+    if min_date:
+        edit_url += f"&min_date={min_date}"
     driver.get(edit_url)
     time.sleep(edit_delay)
 
@@ -464,7 +477,8 @@ def update_rate_price(supplier_id: str, password: str, row_id: str, new_price: s
 def update_multiple_rates(supplier_id: str, password: str,
                           updates: list,
                           rates_url: str = "https://bestpriceskipbins.com.au/supplier/rates_manage.php",
-                          login_delay: float = 5.0, edit_delay: float = 3.0):
+                          login_delay: float = 5.0, edit_delay: float = 3.0,
+                          min_date: str = None):
     """
     Log in ONCE then update multiple rows sequentially.
     updates : list of (size_str, new_price_str) e.g. [("2", "189"), ("3", "308")].
@@ -479,14 +493,14 @@ def update_multiple_rates(supplier_id: str, password: str,
             return False, msg, driver.get_screenshot_as_png()
 
         # Auto-detect size → row_id mapping from the live page
-        id_map = _get_row_id_map(driver, rates_url)
+        id_map = _get_row_id_map(driver, rates_url, min_date=min_date)
 
         for size_str, new_price in updates:
             row_id = id_map.get(size_str)
             if row_id is None:
                 results.append(f"{size_str} m³: ❌ row not found (detected sizes: {list(id_map.keys())})")
                 continue
-            ok, msg = _update_single_row(driver, row_id, new_price, rates_url, edit_delay)
+            ok, msg = _update_single_row(driver, row_id, new_price, rates_url, edit_delay, min_date=min_date)
             if ok:
                 results.append(f"{size_str} m³ → ${new_price} ✓")
             else:
@@ -509,3 +523,30 @@ def update_multiple_rates(supplier_id: str, password: str,
             driver.quit()
         except Exception:
             pass
+
+
+def update_waste_type_rates(supplier_id: str, password: str,
+                            waste_type: str,
+                            updates: list,
+                            min_date: str = None,
+                            login_delay: float = 5.0,
+                            edit_delay: float = 3.0):
+    """
+    Log in and update prices for a specific waste type.
+    waste_type : key in WASTE_TYPE_RATES_URLS
+    updates    : list of (size_str, new_price_str) for sizes < 7.5 m³
+    min_date   : "YYYY-MM-DD" to target specific date column
+    Returns (success, message, screenshot).
+    """
+    rates_url = WASTE_TYPE_RATES_URLS.get(waste_type)
+    if not rates_url:
+        return False, f"No rates URL configured for waste type: {waste_type}", None
+
+    return update_multiple_rates(
+        supplier_id, password,
+        updates=updates,
+        rates_url=rates_url,
+        login_delay=login_delay,
+        edit_delay=edit_delay,
+        min_date=min_date,
+    )

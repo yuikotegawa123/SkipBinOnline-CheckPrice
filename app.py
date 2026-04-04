@@ -51,6 +51,15 @@ def _parse_bpsb_date(d_slash: str) -> str:
     return f"{int(day):02d}-{int(month):02d}-{year}"
 
 
+def _dod_to_min_date(d_slash: str) -> str:
+    """Convert D/MM/YYYY → YYYY-MM-DD for use in BPSB rates URL min_date param."""
+    parts = d_slash.strip().split("/")
+    if len(parts) != 3:
+        return ""
+    day, month, year = parts
+    return f"{year}-{int(month):02d}-{int(day):02d}"
+
+
 # ---------------------------------------------------------------------------
 # Disk cache helpers  (survive F5 / page refresh)
 # ---------------------------------------------------------------------------
@@ -831,12 +840,16 @@ elif page == "BestPriceSkipBins":
                 )
             _bpsb_lt75 = [s for s in BPSB.ALL_SIZES if float(s) < 7.5]
             _edited_rows = []
+            # Build {wt: {size: orig_price}} for use by Edit/Undo buttons
+            _orig_prices = {}
             for _wt in BPSB.WASTE_TYPES:
                 _row = {"Waste Type": _wt}
+                _orig_prices[_wt] = {}
                 for _sz in _bpsb_lt75:
                     _pr = bpsb_results.get(_wt, {}).get(_sz)
                     if isinstance(_pr, (int, float)):
                         _row[f"{_sz} m³"] = f"${_pr - 1:,.0f}"
+                        _orig_prices[_wt][_sz] = _pr
                     else:
                         _row[f"{_sz} m³"] = "N/A"
                 _edited_rows.append(_row)
@@ -844,6 +857,62 @@ elif page == "BestPriceSkipBins":
                 pd.DataFrame(_edited_rows).set_index("Waste Type"),
                 use_container_width=True,
             )
+
+            # Per-waste-type Edit / Undo buttons
+            st.markdown("---")
+            _min_date = _dod_to_min_date(saved_dod)
+            _edit_acc = _matched[0] if _matched else None
+
+            for _wt_i, _wt in enumerate(BPSB.WASTE_TYPES):
+                _bt_col1, _bt_col2, _bt_col3 = st.columns([3, 1, 1])
+                with _bt_col1:
+                    st.write(f"**{_wt}**")
+                with _bt_col2:
+                    _edit_btn = st.button("✏️ Edit Price", key=f"bpsb_wt_edit_{_wt_i}",
+                                         disabled=_edit_acc is None, use_container_width=True)
+                with _bt_col3:
+                    _undo_btn = st.button("↩️ Undo", key=f"bpsb_wt_undo_{_wt_i}",
+                                         disabled=_edit_acc is None, use_container_width=True)
+
+                # Show previous result if any
+                _prev = st.session_state.get(f"bpsb_wt_result_{_wt_i}")
+                if _prev:
+                    if _prev["ok"]:
+                        st.success(_prev["msg"])
+                    else:
+                        st.error(_prev["msg"])
+                    if _prev.get("shot"):
+                        st.image(_prev["shot"], use_container_width=True)
+
+                if (_edit_btn or _undo_btn) and _edit_acc:
+                    _wt_sizes = [s for s in _bpsb_lt75 if s in _orig_prices.get(_wt, {})]
+                    if _undo_btn:
+                        _wt_updates = [(s, str(int(_orig_prices[_wt][s]))) for s in _wt_sizes]
+                        _action_label = "Undo"
+                    else:
+                        _wt_updates = [(s, str(int(_orig_prices[_wt][s]) - 1)) for s in _wt_sizes]
+                        _action_label = "Edit Price"
+
+                    if not _wt_updates:
+                        st.warning(f"⚠️ No priced sizes < 7.5 m³ found for {_wt}.")
+                    else:
+                        with st.spinner(
+                            f"✏️ {_action_label}: {_wt} — "
+                            f"logging in as {_edit_acc['label']} ({_edit_acc['username']})…"
+                        ):
+                            _wrok, _wrmsg, _wrshot = BPSB.update_waste_type_rates(
+                                _edit_acc["username"],
+                                _edit_acc["password"],
+                                waste_type=_wt,
+                                updates=_wt_updates,
+                                min_date=_min_date if _min_date else None,
+                                login_delay=6,
+                                edit_delay=3,
+                            )
+                        st.session_state[f"bpsb_wt_result_{_wt_i}"] = {
+                            "ok": _wrok, "msg": _wrmsg, "shot": _wrshot
+                        }
+                        st.rerun()
 
     # -----------------------------------------------------------------------
     # Sub-tab: Sign In Information  (3 saved accounts, passwords locked)
