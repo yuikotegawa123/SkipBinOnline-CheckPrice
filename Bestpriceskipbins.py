@@ -329,10 +329,12 @@ def update_rate_price(supplier_id: str, password: str, row_id: str, new_price: s
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.common.action_chains import ActionChains
+    from selenium.webdriver.common.keys import Keys
 
     edit_url = (
         f"https://bestpriceskipbins.com.au/supplier/rates_manage.php"
-        f"?action=edit&id={row_id}#admin_form"
+        f"?action=edit&id={row_id}"
     )
     driver = _make_screenshot_driver()
     try:
@@ -345,37 +347,49 @@ def update_rate_price(supplier_id: str, password: str, row_id: str, new_price: s
         driver.get(edit_url)
         time.sleep(edit_delay)
 
-        wait = WebDriverWait(driver, 15)
-
-        # --- Find the Base Price input ---
-        # After ?action=edit&id=N the targeted row is in edit mode.
-        # The Base Price cell becomes the first visible text input in the table.
-        all_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
-        price_input = next((inp for inp in all_inputs if inp.is_displayed()), None)
+        # --- Find the Base Price input inside the rates TABLE only ---
+        # The page also has Extra Hireage inputs at the top — skip those.
+        # When ?action=edit&id=N is active, the targeted row's Base Price cell
+        # becomes an <input type="text"> inside the main rates <table>.
+        table_inputs = driver.find_elements(By.CSS_SELECTOR, "table input[type='text']")
+        price_input = next((inp for inp in table_inputs if inp.is_displayed()), None)
 
         if price_input is None:
-            return False, "Could not find price input on edit page.", driver.get_screenshot_as_png()
+            return False, "Could not find Base Price input inside the rates table.", driver.get_screenshot_as_png()
 
-        driver.execute_script("arguments[0].focus();", price_input)
-        driver.execute_script("arguments[0].value = '';", price_input)
-        price_input.clear()
+        # Triple-click to select all existing text, then type the new price
+        ActionChains(driver).triple_click(price_input).perform()
         price_input.send_keys(new_price)
 
-        # --- Find confirm (✓) button ---
+        # --- Find the confirm (✓) button next to the edited row ---
+        # It's an input[type='image'] immediately after the price input in the table
         confirm_btn = None
         for by, sel in [
-            (By.XPATH, "//input[@type='text'][1]/following::input[@type='image'][1]"),
-            (By.XPATH, "//input[@type='text'][1]/following::button[1]"),
-            (By.XPATH, "//input[@type='text'][1]/following::input[@type='submit'][1]"),
-            (By.XPATH, "//*[@title='Save' or @title='Confirm' or @alt='Save' or @alt='Ok'][1]"),
+            (By.XPATH, ".//following::input[@type='image'][1]"),
+            (By.XPATH, ".//following::input[@type='submit'][1]"),
+            (By.XPATH, ".//following::button[1]"),
         ]:
             try:
-                el = driver.find_element(by, sel)
+                el = price_input.find_element(by, sel)
                 if el.is_displayed():
                     confirm_btn = el
                     break
             except Exception:
                 continue
+
+        # Fallback: any image/submit input visible on the page
+        if confirm_btn is None:
+            for by, sel in [
+                (By.CSS_SELECTOR, "table input[type='image']"),
+                (By.CSS_SELECTOR, "table input[type='submit']"),
+            ]:
+                els = driver.find_elements(by, sel)
+                for el in els:
+                    if el.is_displayed():
+                        confirm_btn = el
+                        break
+                if confirm_btn:
+                    break
 
         if confirm_btn is None:
             return False, "Could not find the confirm (✓) button.", driver.get_screenshot_as_png()
