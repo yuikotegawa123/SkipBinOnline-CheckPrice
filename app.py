@@ -851,39 +851,60 @@ elif page == "BestPriceSkipBins":
             _min_date = _dod_to_min_date(saved_dod)
             _edit_acc = _matched[0] if _matched else None
 
-            # Layout: Waste Type | 2m³ … 7m³ | ✏️ Edit | ↩️ Undo
-            _col_widths = [2] + [1] * len(_bpsb_lt75) + [1, 1]
-            _hdr_cols = st.columns(_col_widths)
-            for _hi, _sz in enumerate(_bpsb_lt75):
-                _hdr_cols[1 + _hi].markdown(f"**{_sz} m³**")
+            # HTML table (data only) + button columns to the right
+            _tbl_col, _edit_col, _undo_col = st.columns([8, 1, 1])
 
+            with _tbl_col:
+                _th = "border:1px solid #444;padding:7px 12px;text-align:left;white-space:nowrap;"
+                _td_wt = "border:1px solid #444;padding:7px 12px;white-space:nowrap;"
+                _td = "border:1px solid #444;padding:7px 12px;text-align:right;"
+                _hdrs = f"<th style='{_th}'>Waste Type</th>" + "".join(
+                    f"<th style='{_th}'>{_sz} m³</th>" for _sz in _bpsb_lt75
+                )
+                _rows_html = ""
+                for _wt in BPSB.WASTE_TYPES:
+                    _cells = f"<td style='{_td_wt}'>{_wt}</td>"
+                    for _sz in _bpsb_lt75:
+                        _pr = _orig_prices[_wt].get(_sz)
+                        _val = f"${_pr - 1:,.0f}" if _pr is not None else "N/A"
+                        _cells += f"<td style='{_td}'>{_val}</td>"
+                    _rows_html += f"<tr>{_cells}</tr>"
+                st.markdown(
+                    f"<table style='border-collapse:collapse;width:100%;font-size:0.9rem;'>"
+                    f"<thead><tr>{_hdrs}</tr></thead><tbody>{_rows_html}</tbody></table>",
+                    unsafe_allow_html=True,
+                )
+
+            # Collect all button states first, then process
+            _edit_btns = []
+            _undo_btns = []
+            with _edit_col:
+                for _wt_i in range(len(BPSB.WASTE_TYPES)):
+                    _edit_btns.append(st.button(
+                        "✏️ Edit", key=f"bpsb_wt_edit_{_wt_i}",
+                        disabled=_edit_acc is None, use_container_width=True,
+                    ))
+            with _undo_col:
+                for _wt_i in range(len(BPSB.WASTE_TYPES)):
+                    _undo_btns.append(st.button(
+                        "↩️ Undo", key=f"bpsb_wt_undo_{_wt_i}",
+                        disabled=_edit_acc is None, use_container_width=True,
+                    ))
+
+            # Result feedback + action processing per waste type
             for _wt_i, _wt in enumerate(BPSB.WASTE_TYPES):
-                _row_cols = st.columns(_col_widths)
-                # Waste type name
-                _row_cols[0].write(_wt)
-                # Price cells
-                for _ci, _sz in enumerate(_bpsb_lt75):
-                    _pr = _orig_prices[_wt].get(_sz)
-                    _row_cols[1 + _ci].write(f"${_pr - 1:,.0f}" if _pr is not None else "N/A")
-                # Buttons on the right
-                _edit_btn = _row_cols[-2].button("✏️ Edit", key=f"bpsb_wt_edit_{_wt_i}",
-                                                 disabled=_edit_acc is None, use_container_width=True)
-                _undo_btn = _row_cols[-1].button("↩️ Undo", key=f"bpsb_wt_undo_{_wt_i}",
-                                                 disabled=_edit_acc is None, use_container_width=True)
-
-                # Result feedback below this row
                 _prev = st.session_state.get(f"bpsb_wt_result_{_wt_i}")
                 if _prev:
                     if _prev["ok"]:
-                        st.success(_prev["msg"])
+                        st.success(f"**{_wt}** — {_prev['msg']}")
                     else:
-                        st.error(_prev["msg"])
+                        st.error(f"**{_wt}** — {_prev['msg']}")
                     if _prev.get("shot"):
                         st.image(_prev["shot"], use_container_width=True)
 
-                if (_edit_btn or _undo_btn) and _edit_acc:
+                if (_edit_btns[_wt_i] or _undo_btns[_wt_i]) and _edit_acc:
                     _wt_sizes = [s for s in _bpsb_lt75 if s in _orig_prices.get(_wt, {})]
-                    if _undo_btn:
+                    if _undo_btns[_wt_i]:
                         _wt_updates = [(s, str(int(_orig_prices[_wt][s]))) for s in _wt_sizes]
                         _action_label = "Undo"
                     else:
