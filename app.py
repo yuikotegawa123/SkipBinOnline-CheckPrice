@@ -8,6 +8,7 @@ import os
 import queue
 import threading
 import time
+from typing import Optional
 
 import pandas as pd
 import streamlit as st
@@ -106,7 +107,6 @@ def _load_cache(path: str) -> Optional[dict]:
 # The Gist must contain a file called  "bab_accounts.json".
 # ---------------------------------------------------------------------------
 
-from typing import Optional
 import requests as _requests
 
 _GIST_FILENAME = "bab_accounts.json"
