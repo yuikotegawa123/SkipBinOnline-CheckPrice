@@ -320,31 +320,40 @@ if page == "Home":
     st.caption("BookABin · BestPriceSkipBins · SkipBinFinder · SkipBinsOnline — one search, four sources")
     st.markdown("---")
 
-    col1, col2, col3, col4 = st.columns([1, 1.4, 1.4, 1])
+    HOME_POSTCODES = ["3173", "3130", "3199"]
+    _SUPPLIER_KEYS  = ["bab", "bpsb", "sbf", "sbo"]
+    _SUPPLIER_LABELS = {
+        "bab":  "📦 BookABin",
+        "bpsb": "💰 BestPriceSkipBins",
+        "sbf":  "🔍 SkipBinFinder",
+        "sbo":  "🌐 SkipBinsOnline",
+    }
+
+    col1, col2, col3 = st.columns([1.4, 1.4, 1])
     with col1:
-        postcode = st.text_input("Postcode", value="3173")
-    with col2:
         dod = st.text_input("Delivery Date (D/MM/YYYY)", value="1/04/2026")
-    with col3:
+    with col2:
         pud = st.text_input("Pickup Date (D/MM/YYYY)", value="8/04/2026")
-    with col4:
+    with col3:
         st.write("")
         st.write("")
         search = st.button("🔍 Search All", width='stretch', type="primary")
 
     if search:
-        if not postcode or not dod or not pud:
+        if not dod or not pud:
             st.error("Please fill in all fields.")
             st.stop()
 
         bpsb_dod = _parse_bpsb_date(dod)
         bpsb_pud = _parse_bpsb_date(pud)
 
-        results_store = {}
-        status_store  = {}
+        # all_results[pc][supplier_key] = {wt: {size: price}}
+        all_results  = {pc: {} for pc in HOME_POSTCODES}
+        status_store = {}   # (pc, key) -> "done"
         lock = threading.Lock()
+        total_tasks = len(HOME_POSTCODES) * len(_SUPPLIER_KEYS)
 
-        def _run(key, run_fn, *args):
+        def _run(pc, key, run_fn, *args):
             cell_q   = queue.Queue()
             status_q = queue.Queue()
             done     = threading.Event()
@@ -355,97 +364,65 @@ if page == "Home":
                 wt, size, price = cell_q.get_nowait()
                 out.setdefault(wt, {})[size] = price
             with lock:
-                results_store[key] = out
-                status_store[key]  = "done"
+                all_results[pc][key] = out
+                status_store[(pc, key)] = "done"
 
-        threads = [
-            threading.Thread(target=_run, args=("bab",  Bookabin.run_search, postcode, dod, pud),           daemon=True),
-            threading.Thread(target=_run, args=("bpsb", BPSB.run_search,     postcode, bpsb_dod, bpsb_pud), daemon=True),
-            threading.Thread(target=_run, args=("sbf",  SBF.run_search,      postcode, dod, pud),           daemon=True),
-            threading.Thread(target=_run, args=("sbo",  SBO.run_search,      postcode, dod, pud),           daemon=True),
-        ]
+        threads = []
+        for _pc in HOME_POSTCODES:
+            _bpsb_dod = _parse_bpsb_date(dod)
+            _bpsb_pud = _parse_bpsb_date(pud)
+            threads += [
+                threading.Thread(target=_run, args=(_pc, "bab",  Bookabin.run_search, _pc, dod, pud),             daemon=True),
+                threading.Thread(target=_run, args=(_pc, "bpsb", BPSB.run_search,     _pc, _bpsb_dod, _bpsb_pud), daemon=True),
+                threading.Thread(target=_run, args=(_pc, "sbf",  SBF.run_search,      _pc, dod, pud),             daemon=True),
+                threading.Thread(target=_run, args=(_pc, "sbo",  SBO.run_search,      _pc, dod, pud),             daemon=True),
+            ]
         for t in threads:
             t.start()
 
-        labels = {
-            "bab":  "📦 BookABin",
-            "bpsb": "💰 BestPriceSkipBins",
-            "sbf":  "🔍 SkipBinFinder",
-            "sbo":  "🌐 SkipBinsOnline",
-        }
-        keys = ["bab", "bpsb", "sbf", "sbo"]
-
-        prog = st.progress(0, text="Searching …")
-        cols = st.columns(4)
-        placeholders = {k: cols[i].empty() for i, k in enumerate(keys)}
-        for k, ph in placeholders.items():
-            ph.info(f"{labels[k]}\n\n⏳ Running …")
-
+        prog = st.progress(0, text="Searching all postcodes …")
         while any(t.is_alive() for t in threads):
-            n_done = sum(1 for k in keys if status_store.get(k) == "done")
-            prog.progress(n_done / 4, text=f"Completed {n_done} / 4 sources …")
-            for k, ph in placeholders.items():
-                if status_store.get(k) == "done":
-                    ph.success(f"{labels[k]}\n\n✅ Done")
+            n_done = sum(1 for k in status_store.values() if k == "done")
+            prog.progress(n_done / total_tasks, text=f"Completed {n_done} / {total_tasks} …")
             time.sleep(1)
-
-        for k, ph in placeholders.items():
-            if status_store.get(k) == "done":
-                ph.success(f"{labels[k]}\n\n✅ Done")
-            else:
-                ph.error(f"{labels[k]}\n\n❌ Failed")
         prog.progress(1.0, text="All done!")
 
-        st.success(f"✅ Done — Postcode {postcode}  |  {dod} → {pud}  |  All four sources complete.")
+        st.success(f"✅ Done — Postcodes {', '.join(HOME_POSTCODES)}  |  {dod} → {pud}")
 
-        tab_bab, tab_bpsb, tab_sbf, tab_sbo = st.tabs([
-            "BookABin", "BestPriceSkipBins", "SkipBinFinder", "SkipBinsOnline"
-        ])
+        pc_tabs = st.tabs([f"📍 {pc}" for pc in HOME_POSTCODES])
+        for pc, pc_tab in zip(HOME_POSTCODES, pc_tabs):
+            with pc_tab:
+                pc_res = all_results[pc]
 
-        with tab_bab:
-            st.caption("Prices from bookabin.com.au — cheapest available supplier.")
-            bab_res = results_store.get("bab", {})
-            if bab_res:
-                st.subheader("Available Sizes")
-                st.dataframe(_to_df(bab_res, Bookabin.WASTE_TYPES, Bookabin.ALL_SIZES), width='stretch')
-                st.subheader("Full Range")
-                st.dataframe(_to_df(bab_res, Bookabin.WASTE_TYPES, FULL_SIZES), width='stretch')
-            else:
-                st.warning("No data returned from BookABin.")
+                bab_res  = pc_res.get("bab",  {})
+                bpsb_res = pc_res.get("bpsb", {})
+                sbf_res  = pc_res.get("sbf",  {})
+                sbo_res  = pc_res.get("sbo",  {})
 
-        with tab_bpsb:
-            st.caption("Prices from bestpriceskipbins.com.au — cheapest available supplier.")
-            bpsb_res = results_store.get("bpsb", {})
-            if bpsb_res:
-                st.subheader("Available Sizes")
-                st.dataframe(_to_df(bpsb_res, BPSB.WASTE_TYPES, BPSB.ALL_SIZES), width='stretch')
-                st.subheader("Full Range")
-                st.dataframe(_to_df(bpsb_res, BPSB.WASTE_TYPES, FULL_SIZES), width='stretch')
-            else:
-                st.warning("No data returned from BestPriceSkipBins.")
+                st.subheader("📦 BookABin")
+                if bab_res:
+                    st.dataframe(_to_df(bab_res, Bookabin.WASTE_TYPES, Bookabin.ALL_SIZES), width='stretch')
+                else:
+                    st.warning("No data returned from BookABin.")
 
-        with tab_sbf:
-            st.caption("Prices from skipbinfinder.com.au — cheapest available supplier.")
-            sbf_res = results_store.get("sbf", {})
-            if sbf_res:
-                st.subheader("Available Sizes")
-                st.dataframe(_to_df(sbf_res, SBF.WASTE_TYPES, SBF.ALL_SIZES), width='stretch')
-                st.subheader("Full Range")
-                st.dataframe(_to_df(sbf_res, SBF.WASTE_TYPES, FULL_SIZES), width='stretch')
-            else:
-                st.warning("No data returned from SkipBinFinder.")
+                st.subheader("💰 BestPriceSkipBins")
+                if bpsb_res:
+                    st.dataframe(_to_df(bpsb_res, BPSB.WASTE_TYPES, BPSB.ALL_SIZES), width='stretch')
+                else:
+                    st.warning("No data returned from BestPriceSkipBins.")
 
-        with tab_sbo:
-            st.caption("Prices from skipbinsonline.com.au — bin sizes fetched live per postcode.")
-            sbo_res = results_store.get("sbo", {})
-            if sbo_res:
-                sbo_waste = {wt: list(sizes.keys()) for wt, sizes in sbo_res.items()}
-                st.subheader("Available Sizes")
-                st.dataframe(_to_df(sbo_res, sbo_waste, SBO.ALL_SIZES), width='stretch')
-                st.subheader("Full Range")
-                st.dataframe(_to_df(sbo_res, sbo_waste, FULL_SIZES), width='stretch')
-            else:
-                st.warning("No data returned from SkipBinsOnline.")
+                st.subheader("🔍 SkipBinFinder")
+                if sbf_res:
+                    st.dataframe(_to_df(sbf_res, SBF.WASTE_TYPES, SBF.ALL_SIZES), width='stretch')
+                else:
+                    st.warning("No data returned from SkipBinFinder.")
+
+                st.subheader("🌐 SkipBinsOnline")
+                if sbo_res:
+                    sbo_waste = {wt: list(sizes.keys()) for wt, sizes in sbo_res.items()}
+                    st.dataframe(_to_df(sbo_res, sbo_waste, SBO.ALL_SIZES), width='stretch')
+                else:
+                    st.warning("No data returned from SkipBinsOnline.")
 
 # ===========================================================================
 # PAGE: BookABin
