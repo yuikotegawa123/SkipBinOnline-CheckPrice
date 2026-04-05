@@ -344,16 +344,15 @@ if page == "Home":
             st.error("Please fill in all fields.")
             st.stop()
 
-        bpsb_dod = _parse_bpsb_date(dod)
-        bpsb_pud = _parse_bpsb_date(pud)
+        _bpsb_dod = _parse_bpsb_date(dod)
+        _bpsb_pud = _parse_bpsb_date(pud)
 
         # all_results[pc][supplier_key] = {wt: {size: price}}
-        all_results  = {pc: {} for pc in HOME_POSTCODES}
-        status_store = {}   # (pc, key) -> "done"
-        lock = threading.Lock()
+        all_results = {pc: {} for pc in HOME_POSTCODES}
         total_tasks = len(HOME_POSTCODES) * len(_SUPPLIER_KEYS)
+        n_done_total = 0
 
-        def _run(pc, key, run_fn, *args):
+        def _run_supplier(pc, key, run_fn, *args):
             cell_q   = queue.Queue()
             status_q = queue.Queue()
             done     = threading.Event()
@@ -363,28 +362,31 @@ if page == "Home":
             while not cell_q.empty():
                 wt, size, price = cell_q.get_nowait()
                 out.setdefault(wt, {})[size] = price
-            with lock:
-                all_results[pc][key] = out
-                status_store[(pc, key)] = "done"
+            all_results[pc][key] = out
 
-        threads = []
-        for _pc in HOME_POSTCODES:
-            _bpsb_dod = _parse_bpsb_date(dod)
-            _bpsb_pud = _parse_bpsb_date(pud)
-            threads += [
-                threading.Thread(target=_run, args=(_pc, "bab",  Bookabin.run_search, _pc, dod, pud),             daemon=True),
-                threading.Thread(target=_run, args=(_pc, "bpsb", BPSB.run_search,     _pc, _bpsb_dod, _bpsb_pud), daemon=True),
-                threading.Thread(target=_run, args=(_pc, "sbf",  SBF.run_search,      _pc, dod, pud),             daemon=True),
-                threading.Thread(target=_run, args=(_pc, "sbo",  SBO.run_search,      _pc, dod, pud),             daemon=True),
+        prog = st.progress(0, text="Searching postcodes …")
+
+        # Process one postcode at a time → max 2 Chrome instances at once (BAB + SBF)
+        for _pc_i, _pc in enumerate(HOME_POSTCODES):
+            prog.progress(n_done_total / total_tasks,
+                          text=f"Postcode {_pc} ({_pc_i+1}/{len(HOME_POSTCODES)}) …")
+            _pc_threads = [
+                threading.Thread(target=_run_supplier, args=(_pc, "bab",  Bookabin.run_search, _pc, dod, pud),              daemon=True),
+                threading.Thread(target=_run_supplier, args=(_pc, "bpsb", BPSB.run_search,     _pc, _bpsb_dod, _bpsb_pud),  daemon=True),
+                threading.Thread(target=_run_supplier, args=(_pc, "sbf",  SBF.run_search,      _pc, dod, pud),              daemon=True),
+                threading.Thread(target=_run_supplier, args=(_pc, "sbo",  SBO.run_search,      _pc, dod, pud),              daemon=True),
             ]
-        for t in threads:
-            t.start()
+            for t in _pc_threads:
+                t.start()
+            while any(t.is_alive() for t in _pc_threads):
+                _done_pc = sum(1 for k in _SUPPLIER_KEYS if k in all_results[_pc])
+                prog.progress((n_done_total + _done_pc) / total_tasks,
+                              text=f"Postcode {_pc}: {_done_pc}/4 suppliers done …")
+                time.sleep(1)
+            for t in _pc_threads:
+                t.join()
+            n_done_total += len(_SUPPLIER_KEYS)
 
-        prog = st.progress(0, text="Searching all postcodes …")
-        while any(t.is_alive() for t in threads):
-            n_done = sum(1 for k in status_store.values() if k == "done")
-            prog.progress(n_done / total_tasks, text=f"Completed {n_done} / {total_tasks} …")
-            time.sleep(1)
         prog.progress(1.0, text="All done!")
 
         st.success(f"✅ Done — Postcodes {', '.join(HOME_POSTCODES)}  |  {dod} → {pud}")
