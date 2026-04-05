@@ -538,10 +538,17 @@ elif page == "BookABin":
             # Update Price section
             # ---------------------------------------------------------------
             st.subheader("💲 Update Price")
-            st.caption("Rule: bin sizes **≤ 7.5 m³** → price − 1  |  bin sizes **> 7.5 m³** → unchanged")
+            st.caption(
+                "Rule: all types → price − 1 for ≤ 12 m³  |  "
+                "General Waste & Green Garden Waste also − 1 for 15, 16, 20, 30 m³  |  "
+                "all other sizes → unchanged"
+            )
+
+            # Waste types that get price-1 for the extra large sizes
+            _EXTRA_MINUS1_WTS  = {'General Waste', 'Green Garden Waste'}
+            _EXTRA_MINUS1_SZFS = {15.0, 16.0, 20.0, 30.0}
 
             # Build price_map: (waste_type, size) → will_set_to
-            # Rule: sizes <= 7.5 m³ → price - 1; sizes > 7.5 m³ → same price
             _price_map = {}   # (wt, sz) → will_set_to
             for _wt, _sizes in bab_results.items():
                 for _sz, _pr in _sizes.items():
@@ -550,7 +557,12 @@ elif page == "BookABin":
                             _sz_f = float(_sz)
                         except (ValueError, TypeError):
                             _sz_f = 0.0
-                        _adj = int(_pr) - 1 if _sz_f <= 7.5 else int(_pr)
+                        if _sz_f <= 12.0:
+                            _adj = int(_pr) - 1
+                        elif _wt in _EXTRA_MINUS1_WTS and _sz_f in _EXTRA_MINUS1_SZFS:
+                            _adj = int(_pr) - 1
+                        else:
+                            _adj = int(_pr)
                         _key = (_wt, _sz)
                         if _key not in _price_map or _adj < _price_map[_key]:
                             _price_map[_key] = _adj
