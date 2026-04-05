@@ -1,5 +1,5 @@
 """
-app.py  â€“  Streamlit web UI for SkipBin Price Checker
+app.py  –  Streamlit web UI for SkipBin Price Checker
 Deploy to Streamlit Community Cloud (free) from GitHub.
 """
 
@@ -36,15 +36,15 @@ def _to_df(results: dict, waste_types_map: dict, all_sizes: list) -> pd.DataFram
         for s in all_sizes:
             price = results.get(wt, {}).get(s)
             if isinstance(price, (int, float)):
-                row[f"{s} mÂ³"] = f"${price:,.0f}"
+                row[f"{s} m³"] = f"${price:,.0f}"
             else:
-                row[f"{s} mÂ³"] = "N/A"
+                row[f"{s} m³"] = "N/A"
         rows.append(row)
     return pd.DataFrame(rows).set_index("Waste Type")
 
 
 def _parse_bpsb_date(d_slash: str) -> str:
-    """Convert D/MM/YYYY â†’ dd-MM-yyyy for BestPriceSkipBins."""
+    """Convert D/MM/YYYY → dd-MM-yyyy for BestPriceSkipBins."""
     parts = d_slash.strip().split("/")
     if len(parts) != 3:
         return d_slash
@@ -53,7 +53,7 @@ def _parse_bpsb_date(d_slash: str) -> str:
 
 
 def _dod_to_min_date(d_slash: str) -> str:
-    """Convert D/MM/YYYY â†’ YYYY-MM-DD for use in BPSB rates URL min_date param."""
+    """Convert D/MM/YYYY → YYYY-MM-DD for use in BPSB rates URL min_date param."""
     parts = d_slash.strip().split("/")
     if len(parts) != 3:
         return ""
@@ -216,12 +216,12 @@ def _gist_save_bpsb(accounts: list) -> bool:
 
 st.set_page_config(
     page_title="SkipBin Price Checker",
-    page_icon="ðŸ—‘ï¸",
+    page_icon="🗑️",
     layout="wide",
 )
 
 # ---------------------------------------------------------------------------
-# Sidebar â€“ Navigation
+# Sidebar – Navigation
 # ---------------------------------------------------------------------------
 
 if "page" not in st.session_state:
@@ -244,7 +244,7 @@ if "bpsb_results" not in st.session_state:
         st.session_state["bpsb_search_dod"] = _cached_bpsb.get("dod", "")
         st.session_state["bpsb_search_pud"] = _cached_bpsb.get("pud", "")
 
-# Restore saved accounts â€” Gist only (no local cache to avoid conflicts)
+# Restore saved accounts — Gist only (no local cache to avoid conflicts)
 if "bab_accounts" not in st.session_state:
     _acc = _gist_load()
     # Normalise: ensure exactly 3 well-formed account dicts regardless of what
@@ -290,10 +290,10 @@ def _go_home():
     st.session_state.supplier_nav = None
 
 with st.sidebar:
-    st.title("ðŸ—‘ï¸ SkipBin Tool")
+    st.title("🗑️ SkipBin Tool")
     st.markdown("---")
 
-    st.button("ðŸ   Home", width='stretch', on_click=_go_home)
+    st.button("🏠  Home", width='stretch', on_click=_go_home)
 
     st.markdown("---")
     st.caption("Suppliers Action")
@@ -302,7 +302,7 @@ with st.sidebar:
         "supplier_nav",
         options=["BookABin", "BestPriceSkipBins", "SkipBinFinder", "SkipBinsOnline"],
         label_visibility="collapsed",
-        format_func=lambda x: f"â€” {x}",
+        format_func=lambda x: f"— {x}",
         index=None,
         key="supplier_nav",
     )
@@ -316,8 +316,8 @@ page = st.session_state.page
 # ===========================================================================
 
 if page == "Home":
-    st.title("ðŸ—‘ï¸ SkipBin Price Checker")
-    st.caption("BookABin Â· BestPriceSkipBins Â· SkipBinFinder Â· SkipBinsOnline â€” one search, four sources")
+    st.title("🗑️ SkipBin Price Checker")
+    st.caption("BookABin · BestPriceSkipBins · SkipBinFinder · SkipBinsOnline — one search, four sources")
     st.markdown("---")
 
     col1, col2, col3, col4 = st.columns([1, 1.4, 1.4, 1])
@@ -330,7 +330,7 @@ if page == "Home":
     with col4:
         st.write("")
         st.write("")
-        search = st.button("ðŸ” Search All", width='stretch', type="primary")
+        search = st.button("🔍 Search All", width='stretch', type="primary")
 
     if search:
         if not postcode or not dod or not pud:
@@ -368,42 +368,42 @@ if page == "Home":
             t.start()
 
         labels = {
-            "bab":  "ðŸ“¦ BookABin",
-            "bpsb": "ðŸ’° BestPriceSkipBins",
-            "sbf":  "ðŸ” SkipBinFinder",
-            "sbo":  "ðŸŒ SkipBinsOnline",
+            "bab":  "📦 BookABin",
+            "bpsb": "💰 BestPriceSkipBins",
+            "sbf":  "🔍 SkipBinFinder",
+            "sbo":  "🌐 SkipBinsOnline",
         }
         keys = ["bab", "bpsb", "sbf", "sbo"]
 
-        prog = st.progress(0, text="Searching â€¦")
+        prog = st.progress(0, text="Searching …")
         cols = st.columns(4)
         placeholders = {k: cols[i].empty() for i, k in enumerate(keys)}
         for k, ph in placeholders.items():
-            ph.info(f"{labels[k]}\n\nâ³ Running â€¦")
+            ph.info(f"{labels[k]}\n\n⏳ Running …")
 
         while any(t.is_alive() for t in threads):
             n_done = sum(1 for k in keys if status_store.get(k) == "done")
-            prog.progress(n_done / 4, text=f"Completed {n_done} / 4 sources â€¦")
+            prog.progress(n_done / 4, text=f"Completed {n_done} / 4 sources …")
             for k, ph in placeholders.items():
                 if status_store.get(k) == "done":
-                    ph.success(f"{labels[k]}\n\nâœ… Done")
+                    ph.success(f"{labels[k]}\n\n✅ Done")
             time.sleep(1)
 
         for k, ph in placeholders.items():
             if status_store.get(k) == "done":
-                ph.success(f"{labels[k]}\n\nâœ… Done")
+                ph.success(f"{labels[k]}\n\n✅ Done")
             else:
-                ph.error(f"{labels[k]}\n\nâŒ Failed")
+                ph.error(f"{labels[k]}\n\n❌ Failed")
         prog.progress(1.0, text="All done!")
 
-        st.success(f"âœ… Done â€” Postcode {postcode}  |  {dod} â†’ {pud}  |  All four sources complete.")
+        st.success(f"✅ Done — Postcode {postcode}  |  {dod} → {pud}  |  All four sources complete.")
 
         tab_bab, tab_bpsb, tab_sbf, tab_sbo = st.tabs([
             "BookABin", "BestPriceSkipBins", "SkipBinFinder", "SkipBinsOnline"
         ])
 
         with tab_bab:
-            st.caption("Prices from bookabin.com.au â€” cheapest available supplier.")
+            st.caption("Prices from bookabin.com.au — cheapest available supplier.")
             bab_res = results_store.get("bab", {})
             if bab_res:
                 st.subheader("Available Sizes")
@@ -414,7 +414,7 @@ if page == "Home":
                 st.warning("No data returned from BookABin.")
 
         with tab_bpsb:
-            st.caption("Prices from bestpriceskipbins.com.au â€” cheapest available supplier.")
+            st.caption("Prices from bestpriceskipbins.com.au — cheapest available supplier.")
             bpsb_res = results_store.get("bpsb", {})
             if bpsb_res:
                 st.subheader("Available Sizes")
@@ -425,7 +425,7 @@ if page == "Home":
                 st.warning("No data returned from BestPriceSkipBins.")
 
         with tab_sbf:
-            st.caption("Prices from skipbinfinder.com.au â€” cheapest available supplier.")
+            st.caption("Prices from skipbinfinder.com.au — cheapest available supplier.")
             sbf_res = results_store.get("sbf", {})
             if sbf_res:
                 st.subheader("Available Sizes")
@@ -436,7 +436,7 @@ if page == "Home":
                 st.warning("No data returned from SkipBinFinder.")
 
         with tab_sbo:
-            st.caption("Prices from skipbinsonline.com.au â€” bin sizes fetched live per postcode.")
+            st.caption("Prices from skipbinsonline.com.au — bin sizes fetched live per postcode.")
             sbo_res = results_store.get("sbo", {})
             if sbo_res:
                 sbo_waste = {wt: list(sizes.keys()) for wt, sizes in sbo_res.items()}
@@ -452,16 +452,16 @@ if page == "Home":
 # ===========================================================================
 
 elif page == "BookABin":
-    st.title("ðŸ“¦ BookABin")
+    st.title("📦 BookABin")
     st.markdown("---")
 
-    bab_tab_prices, bab_tab_signin = st.tabs(["ðŸ” Check Price", "ï¿½ Sign In Information"])
+    bab_tab_prices, bab_tab_signin = st.tabs(["🔍 Check Price", "� Sign In Information"])
 
     # -----------------------------------------------------------------------
     # Sub-tab: Check Price (BookABin only)
     # -----------------------------------------------------------------------
     with bab_tab_prices:
-        st.subheader("Check Prices â€” bookabin.com.au")
+        st.subheader("Check Prices — bookabin.com.au")
         st.caption("Search live prices from BookABin for your postcode and hire period.")
 
         bab_col1, bab_col2, bab_col3, bab_col4 = st.columns([1, 1.4, 1.4, 1])
@@ -474,7 +474,7 @@ elif page == "BookABin":
         with bab_col4:
             st.write("")
             st.write("")
-            bab_search = st.button("ðŸ” Search BookABin", width='stretch', type="primary", key="bab_search")
+            bab_search = st.button("🔍 Search BookABin", width='stretch', type="primary", key="bab_search")
 
         if bab_search:
             if not bab_postcode or not bab_dod or not bab_pud:
@@ -493,14 +493,14 @@ elif page == "BookABin":
                     out.setdefault(wt, {})[size] = price
                 return out
 
-            with st.spinner("ðŸ” Fetching prices from BookABinâ€¦ (this may take a minute)"):
+            with st.spinner("🔍 Fetching prices from BookABin… (this may take a minute)"):
                 _fetched = _run_bab(Bookabin.run_search, bab_postcode, bab_dod, bab_pud)
 
             if not _fetched:
                 st.warning("No data returned from BookABin. Check the postcode and dates, then try again.")
                 st.session_state.pop("bab_results", None)
             else:
-                # â”€â”€ Persist results so they survive tab switches AND F5 â”€â”€
+                # ── Persist results so they survive tab switches AND F5 ──
                 st.session_state["bab_results"]    = _fetched
                 st.session_state["bab_search_pc"]  = bab_postcode
                 st.session_state["bab_search_dod"] = bab_dod
@@ -512,7 +512,7 @@ elif page == "BookABin":
                     "pud":     bab_pud,
                 })
 
-        # â”€â”€ Render from session_state (persists across tab switches) â”€â”€
+        # ── Render from session_state (persists across tab switches) ──
         if "bab_results" in st.session_state:
             bab_results  = st.session_state["bab_results"]
             saved_pc  = st.session_state.get("bab_search_pc", "")
@@ -520,11 +520,11 @@ elif page == "BookABin":
             saved_pud = st.session_state.get("bab_search_pud", "")
 
             st.success(
-                f"âœ… Done â€” Postcode **{saved_pc}**  |  {saved_dod} â†’ {saved_pud}  |  BookABin prices loaded."
+                f"✅ Done — Postcode **{saved_pc}**  |  {saved_dod} → {saved_pud}  |  BookABin prices loaded."
             )
 
             # --- Cheapest price highlight ---
-            st.subheader("ðŸ’° Cheapest Available Price")
+            st.subheader("💰 Cheapest Available Price")
             cheapest_price = None
             cheapest_wt    = None
             cheapest_size  = None
@@ -539,7 +539,7 @@ elif page == "BookABin":
             if cheapest_price is not None:
                 ch_col1, ch_col2, ch_col3 = st.columns(3)
                 ch_col1.metric("Waste Type", cheapest_wt)
-                ch_col2.metric("Bin Size",   f"{cheapest_size} mÂ³")
+                ch_col2.metric("Bin Size",   f"{cheapest_size} m³")
                 ch_col3.metric("Best Price", f"${cheapest_price:,.0f}")
             else:
                 st.info("No priced results found for this postcode / date range.")
@@ -547,7 +547,7 @@ elif page == "BookABin":
             st.markdown("---")
 
             # --- Full data tables ---
-            st.subheader("ðŸ“‹ All Available Sizes")
+            st.subheader("📋 All Available Sizes")
             st.dataframe(
                 _to_df(bab_results, Bookabin.WASTE_TYPES, Bookabin.ALL_SIZES),
                 width='stretch',
@@ -558,12 +558,12 @@ elif page == "BookABin":
             # ---------------------------------------------------------------
             # Update Price section
             # ---------------------------------------------------------------
-            st.subheader("ðŸ’² Update Price")
-            st.caption("Rule: bin sizes **â‰¤ 7.5 mÂ³** â†’ price âˆ’ 1  |  bin sizes **> 7.5 mÂ³** â†’ unchanged")
+            st.subheader("💲 Update Price")
+            st.caption("Rule: bin sizes **≤ 7.5 m³** → price − 1  |  bin sizes **> 7.5 m³** → unchanged")
 
-            # Build price_map: (waste_type, size) â†’ will_set_to
-            # Rule: sizes <= 7.5 mÂ³ â†’ price - 1; sizes > 7.5 mÂ³ â†’ same price
-            _price_map = {}   # (wt, sz) â†’ will_set_to
+            # Build price_map: (waste_type, size) → will_set_to
+            # Rule: sizes <= 7.5 m³ → price - 1; sizes > 7.5 m³ → same price
+            _price_map = {}   # (wt, sz) → will_set_to
             for _wt, _sizes in bab_results.items():
                 for _sz, _pr in _sizes.items():
                     if isinstance(_pr, (int, float)):
@@ -585,7 +585,7 @@ elif page == "BookABin":
                     _row = {"Waste Type": _wt}
                     for _sz in _update_szs:
                         _val = _price_map.get((_wt, _sz))
-                        _row[f"{_sz} mÂ³"] = f"${_val:,.0f}" if _val is not None else "N/A"
+                        _row[f"{_sz} m³"] = f"${_val:,.0f}" if _val is not None else "N/A"
                     _preview_rows.append(_row)
                 _df_preview = pd.DataFrame(_preview_rows).set_index("Waste Type")
                 st.dataframe(_df_preview, width='stretch')
@@ -595,7 +595,7 @@ elif page == "BookABin":
                 with _copy_col:
                     _csv_text = _df_preview.to_csv(index=True)
                     st.download_button(
-                        "ðŸ“‹ Download as CSV",
+                        "📋 Download as CSV",
                         data=_csv_text,
                         file_name="update_price.csv",
                         mime="text/csv",
@@ -626,9 +626,9 @@ elif page == "BookABin":
                     _json_text = _json.dumps(_json_data, indent=2)
                     _copy_js = f"""
                     <textarea id="_cp_buf" style="position:absolute;left:-9999px">{_json_text}</textarea>
-                    <button onclick="var t=document.getElementById('_cp_buf');t.select();document.execCommand('copy');this.innerText='âœ… Copied!';"
+                    <button onclick="var t=document.getElementById('_cp_buf');t.select();document.execCommand('copy');this.innerText='✅ Copied!';"
                         style="width:100%;padding:0.4rem 0.8rem;background:#ff4b4b;color:white;border:none;border-radius:4px;cursor:pointer;font-size:0.9rem;">
-                        ðŸ“‹ Copy as JSON
+                        📋 Copy as JSON
                     </button>"""
                     st.components.v1.html(_copy_js, height=42)
             else:
@@ -638,7 +638,7 @@ elif page == "BookABin":
     # Sub-tab: Sign In Information  (3 saved accounts, passwords locked)
     # -----------------------------------------------------------------------
     with bab_tab_signin:
-        st.subheader("ðŸ” Sign In Information â€” bookabin.com.au")
+        st.subheader("🔐 Sign In Information — bookabin.com.au")
         st.caption("Saved credentials for up to 3 BookABin supplier accounts. Passwords are hidden and protected.")
         st.markdown("---")
 
@@ -648,11 +648,11 @@ elif page == "BookABin":
         for i in range(3):
             acc = accounts[i]
             with st.expander(
-                f"**{acc['label']}**  â€”  Postcode: `{acc.get('postcode') or '(not set)'}`  |  Supplier ID: `{acc['supplier_id'] or '(not set)'}`",
+                f"**{acc['label']}**  —  Postcode: `{acc.get('postcode') or '(not set)'}`  |  Supplier ID: `{acc['supplier_id'] or '(not set)'}`",
                 expanded=True,
             ):
 
-                # â”€â”€ View row: Postcode + Supplier ID + masked password â”€â”€
+                # ── View row: Postcode + Supplier ID + masked password ──
                 v1, v2, v3 = st.columns([1, 1, 1])
                 with v1:
                     new_pc = st.text_input(
@@ -668,7 +668,7 @@ elif page == "BookABin":
                     )
                 with v3:
                     # Always show masked placeholder; real value never printed
-                    masked = "â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢" if acc["password"] else "(not set)"
+                    masked = "••••••••" if acc["password"] else "(not set)"
                     st.text_input(
                         "Password",
                         value=masked,
@@ -689,9 +689,9 @@ elif page == "BookABin":
                     st.session_state.pop("bab_accounts", None)  # force fresh Gist fetch on rerun
                     st.rerun()
 
-                # â”€â”€ Unlock / change password section â”€â”€
+                # ── Unlock / change password section ──
                 if not unlocked[i]:
-                    st.markdown("ðŸ”’ **Password is locked.** Enter the current password to unlock and change it.")
+                    st.markdown("🔒 **Password is locked.** Enter the current password to unlock and change it.")
                     ul1, ul2 = st.columns([2, 1])
                     with ul1:
                         entered = st.text_input(
@@ -702,19 +702,19 @@ elif page == "BookABin":
                     with ul2:
                         st.write("")
                         st.write("")
-                        unlock_btn = st.button("ðŸ”“ Unlock", key=f"bab_unlock_btn_{i}")
+                        unlock_btn = st.button("🔓 Unlock", key=f"bab_unlock_btn_{i}")
 
                     if unlock_btn:
                         if not acc["password"] or entered == acc["password"]:
-                            # Empty password (not set yet) â†’ allow unlock directly
+                            # Empty password (not set yet) → allow unlock directly
                             unlocked[i] = True
                             st.session_state["bab_acc_unlocked"] = unlocked
                             st.rerun()
                         else:
-                            st.error("âŒ Incorrect password.")
+                            st.error("❌ Incorrect password.")
                 else:
-                    # â”€â”€ Edit mode: set new password â”€â”€
-                    st.markdown("ðŸ”“ **Unlocked.** Set a new password below.")
+                    # ── Edit mode: set new password ──
+                    st.markdown("🔓 **Unlocked.** Set a new password below.")
                     e1, e2, e3 = st.columns([2, 2, 1])
                     with e1:
                         new_pwd = st.text_input("New Password", type="password", key=f"bab_newpwd_{i}")
@@ -723,22 +723,22 @@ elif page == "BookABin":
                     with e3:
                         st.write("")
                         st.write("")
-                        save_btn = st.button("ðŸ’¾ Save", key=f"bab_savepwd_{i}", type="primary")
+                        save_btn = st.button("💾 Save", key=f"bab_savepwd_{i}", type="primary")
 
-                    cancel_btn = st.button("ðŸ”’ Cancel & Lock", key=f"bab_cancel_{i}")
+                    cancel_btn = st.button("🔒 Cancel & Lock", key=f"bab_cancel_{i}")
 
                     if save_btn:
                         if not new_pwd:
                             st.error("New password cannot be empty.")
                         elif new_pwd != confirm_pwd:
-                            st.error("âŒ Passwords do not match.")
+                            st.error("❌ Passwords do not match.")
                         else:
                             accounts[i]["password"] = new_pwd
                             _gist_save(accounts)
                             unlocked[i] = False
                             st.session_state["bab_acc_unlocked"] = unlocked
                             st.session_state.pop("bab_accounts", None)  # force fresh Gist fetch on rerun
-                            st.success(f"âœ… Password for {acc['label']} saved.")
+                            st.success(f"✅ Password for {acc['label']} saved.")
                             st.rerun()
 
                     if cancel_btn:
@@ -752,16 +752,16 @@ elif page == "BookABin":
 # ===========================================================================
 
 elif page == "BestPriceSkipBins":
-    st.title("ðŸ’° BestPriceSkipBins")
+    st.title("💰 BestPriceSkipBins")
     st.markdown("---")
 
-    bpsb_tab_prices, bpsb_tab_signin, bpsb_tab_rates = st.tabs(["ðŸ” Check Price", "ðŸ” Sign In Information", "âœï¸ Update Rates"])
+    bpsb_tab_prices, bpsb_tab_signin, bpsb_tab_rates = st.tabs(["🔍 Check Price", "🔐 Sign In Information", "✏️ Update Rates"])
 
     # -----------------------------------------------------------------------
     # Sub-tab: Check Price
     # -----------------------------------------------------------------------
     with bpsb_tab_prices:
-        st.subheader("Check Prices â€” bestpriceskipbins.com.au")
+        st.subheader("Check Prices — bestpriceskipbins.com.au")
         st.caption("Search live prices from BestPriceSkipBins for your postcode and hire period.")
 
         bpsb_col1, bpsb_col2, bpsb_col3, bpsb_col4 = st.columns([1, 1.4, 1.4, 1])
@@ -774,7 +774,7 @@ elif page == "BestPriceSkipBins":
         with bpsb_col4:
             st.write("")
             st.write("")
-            bpsb_search = st.button("ðŸ” Search BestPriceSkipBins", width='stretch', type="primary", key="bpsb_search")
+            bpsb_search = st.button("🔍 Search BestPriceSkipBins", width='stretch', type="primary", key="bpsb_search")
 
         if bpsb_search:
             if not bpsb_postcode or not bpsb_dod_raw or not bpsb_pud_raw:
@@ -796,7 +796,7 @@ elif page == "BestPriceSkipBins":
                     out.setdefault(wt, {})[size] = price
                 return out
 
-            with st.spinner("ðŸ” Fetching prices from BestPriceSkipBinsâ€¦ (this may take a minute)"):
+            with st.spinner("🔍 Fetching prices from BestPriceSkipBins… (this may take a minute)"):
                 _fetched = _run_bpsb(BPSB.run_search, bpsb_postcode, bpsb_dod, bpsb_pud)
 
             if not _fetched:
@@ -807,7 +807,7 @@ elif page == "BestPriceSkipBins":
                 st.session_state["bpsb_search_pc"]  = bpsb_postcode
                 st.session_state["bpsb_search_dod"] = bpsb_dod_raw
                 st.session_state["bpsb_search_pud"] = bpsb_pud_raw
-                # Compute edited prices (< 7.5 mÂ³) â€” stored separately, NOT in disk cache
+                # Compute edited prices (< 7.5 m³) — stored separately, NOT in disk cache
                 _lt75 = [s for s in BPSB.ALL_SIZES if float(s) < 7.5]
                 _ep = {}
                 for _wt in BPSB.WASTE_TYPES:
@@ -824,7 +824,7 @@ elif page == "BestPriceSkipBins":
                     "pud":     bpsb_pud_raw,
                 })
 
-        # â”€â”€ Render from session_state (persists across tab switches) â”€â”€
+        # ── Render from session_state (persists across tab switches) ──
         if "bpsb_results" in st.session_state:
             bpsb_results  = st.session_state["bpsb_results"]
             saved_pc  = st.session_state.get("bpsb_search_pc", "")
@@ -832,11 +832,11 @@ elif page == "BestPriceSkipBins":
             saved_pud = st.session_state.get("bpsb_search_pud", "")
 
             st.success(
-                f"âœ… Done â€” Postcode **{saved_pc}**  |  {saved_dod} â†’ {saved_pud}  |  BestPriceSkipBins prices loaded."
+                f"✅ Done — Postcode **{saved_pc}**  |  {saved_dod} → {saved_pud}  |  BestPriceSkipBins prices loaded."
             )
 
             # --- Cheapest price highlight ---
-            st.subheader("ðŸ’° Cheapest Available Price")
+            st.subheader("💰 Cheapest Available Price")
             cheapest_price = None
             cheapest_wt    = None
             cheapest_size  = None
@@ -851,15 +851,15 @@ elif page == "BestPriceSkipBins":
             if cheapest_price is not None:
                 ch_col1, ch_col2, ch_col3 = st.columns(3)
                 ch_col1.metric("Waste Type", cheapest_wt)
-                ch_col2.metric("Bin Size",   f"{cheapest_size} mÂ³")
+                ch_col2.metric("Bin Size",   f"{cheapest_size} m³")
                 ch_col3.metric("Best Price", f"${cheapest_price:,.0f}")
             else:
                 st.info("No priced results found for this postcode / date range.")
 
             st.markdown("---")
 
-            # --- Single combined table: all waste types Ã— all cube sizes ---
-            st.subheader("ðŸ“‹ All Prices â€” All Sizes")
+            # --- Single combined table: all waste types × all cube sizes ---
+            st.subheader("📋 All Prices — All Sizes")
             st.dataframe(
                 _to_df(bpsb_results, BPSB.WASTE_TYPES, BPSB.ALL_SIZES),
                 width='stretch',
@@ -867,10 +867,10 @@ elif page == "BestPriceSkipBins":
 
             st.markdown("---")
 
-            # --- Edited Price table: sizes < 7.5 mÂ³, all waste types, price âˆ’ 1 ---
-            st.subheader("âœï¸ Edited Price (< 7.5 mÂ³,  price âˆ’ 1)")
+            # --- Edited Price table: sizes < 7.5 m³, all waste types, price − 1 ---
+            st.subheader("✏️ Edited Price (< 7.5 m³,  price − 1)")
 
-            # Account checker â€” show which saved accounts match the searched postcode
+            # Account checker — show which saved accounts match the searched postcode
             _bpsb_accs = st.session_state.get("bpsb_accounts", [])
             _matched = [
                 a for a in _bpsb_accs
@@ -883,17 +883,17 @@ elif page == "BestPriceSkipBins":
             if _matched:
                 st.success(
                     "**Accounts linked to postcode " + saved_pc + ":** "
-                    + "  |  ".join(f"âœ… {a['label']}: `{a['username']}`" for a in _matched)
+                    + "  |  ".join(f"✅ {a['label']}: `{a['username']}`" for a in _matched)
                 )
             else:
-                st.warning(f"âš ï¸ No saved account has postcode **{saved_pc}**.")
+                st.warning(f"⚠️ No saved account has postcode **{saved_pc}**.")
             if _unmatched:
                 st.caption(
                     "Other accounts: "
                     + "  |  ".join(f"{a['label']}: `{a['username']}` (postcode {a.get('postcode') or 'not set'})" for a in _unmatched)
                 )
             _bpsb_lt75 = [s for s in BPSB.ALL_SIZES if float(s) < 7.5]
-            # Read orig_prices from session state â€” only present after a fresh search
+            # Read orig_prices from session state — only present after a fresh search
             _orig_prices = st.session_state.get("bpsb_edited_prices", {})
 
             if not _orig_prices:
@@ -907,14 +907,14 @@ elif page == "BestPriceSkipBins":
                     st.session_state["bpsb_wt_queue"] = {}
                 _queue = st.session_state["bpsb_wt_queue"]
 
-                # One st.columns row per data row â€” same widths for header and data ensure alignment
+                # One st.columns row per data row — same widths for header and data ensure alignment
                 _col_widths = [2] + [1] * len(_bpsb_lt75) + [1, 1]
 
                 # Header row (button columns intentionally empty)
                 _hdr = st.columns(_col_widths)
                 _hdr[0].markdown("**Waste Type**")
                 for _hi, _sz in enumerate(_bpsb_lt75):
-                    _hdr[1 + _hi].markdown(f"**{_sz} mÂ³**")
+                    _hdr[1 + _hi].markdown(f"**{_sz} m³**")
                 st.divider()
 
                 # Data rows with inline Edit / Undo buttons
@@ -924,17 +924,17 @@ elif page == "BestPriceSkipBins":
                     _row = st.columns(_col_widths)
                     # Show queue indicator next to name
                     _queued = _queue.get(_wt_i)
-                    _name_label = f"{'â³ ' if _queued else ''}{_wt}{'  *(undo)*' if _queued == 'undo' else '  *(edit)*' if _queued == 'edit' else ''}"
+                    _name_label = f"{'⏳ ' if _queued else ''}{_wt}{'  *(undo)*' if _queued == 'undo' else '  *(edit)*' if _queued == 'edit' else ''}"
                     _row[0].markdown(_name_label)
                     for _ci, _sz in enumerate(_bpsb_lt75):
                         _pr = _orig_prices.get(_wt, {}).get(_sz)
                         _row[1 + _ci].write(f"${_pr - 1:,.0f}" if _pr is not None else "N/A")
                     _edit_btns.append(_row[-2].button(
-                        "âœï¸ Edit", key=f"bpsb_wt_edit_{_wt_i}",
+                        "✏️ Edit", key=f"bpsb_wt_edit_{_wt_i}",
                         disabled=_edit_acc is None, width='stretch',
                     ))
                     _undo_btns.append(_row[-1].button(
-                        "â†©ï¸ Undo", key=f"bpsb_wt_undo_{_wt_i}",
+                        "↩️ Undo", key=f"bpsb_wt_undo_{_wt_i}",
                         disabled=_edit_acc is None, width='stretch',
                     ))
 
@@ -953,10 +953,10 @@ elif page == "BestPriceSkipBins":
                             _queue[_wt_i] = "undo"
                         st.rerun()
 
-                # â”€â”€ Queue table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-                st.markdown("#### ðŸ—‚ Queue")
+                # ── Queue table ──────────────────────────────────────────
+                st.markdown("#### 🗂 Queue")
                 if not _queue:
-                    st.caption("No actions queued. Click âœï¸ Edit or â†©ï¸ Undo above to add.")
+                    st.caption("No actions queued. Click ✏️ Edit or ↩️ Undo above to add.")
                 else:
                     _wt_keys = list(BPSB.WASTE_TYPES.keys())
                     _q_hdr = st.columns([3, 1, 1])
@@ -967,22 +967,22 @@ elif page == "BestPriceSkipBins":
                         _q_wt = _wt_keys[_q_idx]
                         _qc = st.columns([3, 1, 1])
                         _qc[0].write(_q_wt)
-                        _qc[1].write("âœï¸ Edit" if _q_action == "edit" else "â†©ï¸ Undo")
-                        if _qc[2].button("ðŸ—‘ï¸", key=f"bpsb_q_del_{_qi}_{_q_idx}", width='stretch'):
+                        _qc[1].write("✏️ Edit" if _q_action == "edit" else "↩️ Undo")
+                        if _qc[2].button("🗑️", key=f"bpsb_q_del_{_qi}_{_q_idx}", width='stretch'):
                             del _queue[_q_idx]
                             st.rerun()
 
-                # â”€â”€ Last run summary banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                # ── Last run summary banner ───────────────────────────────
                 _last_run = st.session_state.get("bpsb_last_run_summary", [])
                 if _last_run:
-                    st.markdown("#### ðŸ“‹ Last Run Results")
+                    st.markdown("#### 📋 Last Run Results")
                     _ok_items  = [r for r in _last_run if r["ok"]]
                     _err_items = [r for r in _last_run if not r["ok"]]
                     if _ok_items:
                         st.success("**Done:**\n" + "\n".join(f"- {r['msg']}" for r in _ok_items))
                     if _err_items:
                         st.error("**Failed:**\n" + "\n".join(f"- {r['msg']}" for r in _err_items))
-                    if st.button("âœ– Clear results", key="bpsb_clear_results"):
+                    if st.button("✖ Clear results", key="bpsb_clear_results"):
                         st.session_state["bpsb_last_run_summary"] = []
                         st.rerun()
                     st.markdown("---")
@@ -991,9 +991,9 @@ elif page == "BestPriceSkipBins":
                     _prev = st.session_state.get(f"bpsb_wt_result_{_wt_i}")
                     if _prev:
                         if _prev["ok"]:
-                            st.success(f"**{_wt}** â€” {_prev['msg']}")
+                            st.success(f"**{_wt}** — {_prev['msg']}")
                         else:
-                            st.error(f"**{_wt}** â€” {_prev['msg']}")
+                            st.error(f"**{_wt}** — {_prev['msg']}")
 
                 def _run_wt_edit(wt, undo=False):
                     """Run a single waste-type edit; stores result in session state."""
@@ -1004,7 +1004,7 @@ elif page == "BestPriceSkipBins":
                     else:
                         wt_updates = [(s, str(int(_orig_prices[wt][s]) - 1)) for s in wt_sizes]
                     if not wt_updates:
-                        result = {"ok": False, "msg": f"{wt}: No priced sizes < 7.5 mÂ³ found."}
+                        result = {"ok": False, "msg": f"{wt}: No priced sizes < 7.5 m³ found."}
                         st.session_state[f"bpsb_wt_result_{idx}"] = result
                         st.session_state.setdefault("bpsb_last_run_summary", []).append(result)
                         return
@@ -1014,7 +1014,7 @@ elif page == "BestPriceSkipBins":
                         min_date=_min_date if _min_date else None,
                         login_delay=6, edit_delay=3,
                     )
-                    result = {"ok": ok, "msg": f"{wt} â€” {msg}"}
+                    result = {"ok": ok, "msg": f"{wt} — {msg}"}
                     st.session_state[f"bpsb_wt_result_{idx}"] = result
                     st.session_state.setdefault("bpsb_last_run_summary", []).append(result)
 
@@ -1022,21 +1022,21 @@ elif page == "BestPriceSkipBins":
                     import concurrent.futures
                     _btn_row = st.columns([1, 1, 1, 5])
 
-                    # Run Queue button â€” runs all queued items in parallel
+                    # Run Queue button — runs all queued items in parallel
                     _run_queue_btn = _btn_row[0].button(
-                        f"â–¶ Run Queue ({len(_queue)})" if _queue else "â–¶ Run Queue",
+                        f"▶ Run Queue ({len(_queue)})" if _queue else "▶ Run Queue",
                         key="bpsb_run_queue",
                         disabled=not _queue,
                         width='stretch',
                     )
-                    _edit_all = _btn_row[1].button("âœï¸ Edit All", key="bpsb_edit_all", width='stretch')
-                    _undo_all = _btn_row[2].button("â†©ï¸ Undo All", key="bpsb_undo_all", width='stretch')
+                    _edit_all = _btn_row[1].button("✏️ Edit All", key="bpsb_edit_all", width='stretch')
+                    _undo_all = _btn_row[2].button("↩️ Undo All", key="bpsb_undo_all", width='stretch')
 
                     if _run_queue_btn and _queue:
                         _items = list(_queue.items())
                         _wts_to_run = [(list(BPSB.WASTE_TYPES.keys())[i], v == "undo") for i, v in _items]
                         st.session_state["bpsb_last_run_summary"] = []
-                        with st.spinner(f"Running {len(_wts_to_run)} queued item(s) in parallelâ€¦"):
+                        with st.spinner(f"Running {len(_wts_to_run)} queued item(s) in parallel…"):
                             with concurrent.futures.ThreadPoolExecutor(max_workers=len(_wts_to_run)) as _pool:
                                 _futures = [_pool.submit(_run_wt_edit, wt, undo) for wt, undo in _wts_to_run]
                                 concurrent.futures.wait(_futures)
@@ -1047,7 +1047,7 @@ elif page == "BestPriceSkipBins":
                         _is_undo_all = bool(_undo_all)
                         _all_wts = [wt for wt in BPSB.WASTE_TYPES if any(s in _orig_prices.get(wt, {}) for s in _bpsb_lt75)]
                         st.session_state["bpsb_last_run_summary"] = []
-                        with st.spinner(f"{'Undo' if _is_undo_all else 'Edit'} All: {len(_all_wts)} waste types in parallelâ€¦"):
+                        with st.spinner(f"{'Undo' if _is_undo_all else 'Edit'} All: {len(_all_wts)} waste types in parallel…"):
                             with concurrent.futures.ThreadPoolExecutor(max_workers=len(_all_wts)) as _pool:
                                 _futures = [_pool.submit(_run_wt_edit, wt, _is_undo_all) for wt in _all_wts]
                                 concurrent.futures.wait(_futures)
@@ -1058,7 +1058,7 @@ elif page == "BestPriceSkipBins":
     # Sub-tab: Sign In Information  (3 saved accounts, passwords locked)
     # -----------------------------------------------------------------------
     with bpsb_tab_signin:
-        st.subheader("ðŸ” Sign In Information â€” bestpriceskipbins.com.au")
+        st.subheader("🔐 Sign In Information — bestpriceskipbins.com.au")
         st.caption("Saved credentials for up to 3 BestPriceSkipBins supplier accounts. Passwords are hidden and protected.")
         st.markdown("---")
 
@@ -1069,7 +1069,7 @@ elif page == "BestPriceSkipBins":
         for i in range(3):
             acc = bpsb_accounts[i]
             with st.expander(
-                f"**{acc['label']}**  â€”  Postcode: `{acc.get('postcode') or '(not set)'}`  |  Username: `{acc.get('username') or '(not set)'}`",
+                f"**{acc['label']}**  —  Postcode: `{acc.get('postcode') or '(not set)'}`  |  Username: `{acc.get('username') or '(not set)'}`",
                 expanded=True,
             ):
                 v1, v2, v3 = st.columns([1, 1, 1])
@@ -1086,7 +1086,7 @@ elif page == "BestPriceSkipBins":
                         key=f"bpsb_user_{i}",
                     )
                 with v3:
-                    masked = "â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢" if acc.get("password") else "(not set)"
+                    masked = "••••••••" if acc.get("password") else "(not set)"
                     st.text_input(
                         "Password",
                         value=masked,
@@ -1107,7 +1107,7 @@ elif page == "BestPriceSkipBins":
                     st.rerun()
 
                 if not bpsb_unlocked[i]:
-                    st.markdown("ðŸ”’ **Password is locked.** Enter the current password to unlock and change it.")
+                    st.markdown("🔒 **Password is locked.** Enter the current password to unlock and change it.")
                     ul1, ul2 = st.columns([2, 1])
                     with ul1:
                         entered = st.text_input(
@@ -1118,7 +1118,7 @@ elif page == "BestPriceSkipBins":
                     with ul2:
                         st.write("")
                         st.write("")
-                        unlock_btn = st.button("ðŸ”“ Unlock", key=f"bpsb_unlock_btn_{i}")
+                        unlock_btn = st.button("🔓 Unlock", key=f"bpsb_unlock_btn_{i}")
 
                     if unlock_btn:
                         if not acc.get("password") or entered == acc["password"]:
@@ -1126,9 +1126,9 @@ elif page == "BestPriceSkipBins":
                             st.session_state["bpsb_acc_unlocked"] = bpsb_unlocked
                             st.rerun()
                         else:
-                            st.error("âŒ Incorrect password.")
+                            st.error("❌ Incorrect password.")
                 else:
-                    st.markdown("ðŸ”“ **Unlocked.** Set a new password below.")
+                    st.markdown("🔓 **Unlocked.** Set a new password below.")
                     e1, e2, e3 = st.columns([2, 2, 1])
                     with e1:
                         new_pwd = st.text_input("New Password", type="password", key=f"bpsb_newpwd_{i}")
@@ -1137,22 +1137,22 @@ elif page == "BestPriceSkipBins":
                     with e3:
                         st.write("")
                         st.write("")
-                        save_btn = st.button("ðŸ’¾ Save", key=f"bpsb_savepwd_{i}", type="primary")
+                        save_btn = st.button("💾 Save", key=f"bpsb_savepwd_{i}", type="primary")
 
-                    cancel_btn = st.button("ðŸ”’ Cancel & Lock", key=f"bpsb_cancel_{i}")
+                    cancel_btn = st.button("🔒 Cancel & Lock", key=f"bpsb_cancel_{i}")
 
                     if save_btn:
                         if not new_pwd:
                             st.error("New password cannot be empty.")
                         elif new_pwd != confirm_pwd:
-                            st.error("âŒ Passwords do not match.")
+                            st.error("❌ Passwords do not match.")
                         else:
                             bpsb_accounts[i]["password"] = new_pwd
                             _save_cache(_BPSB_ACC_CACHE, bpsb_accounts)
                             _gist_save_bpsb(bpsb_accounts)
                             bpsb_unlocked[i] = False
                             st.session_state["bpsb_acc_unlocked"] = bpsb_unlocked
-                            st.success(f"âœ… Password for {acc['label']} saved.")
+                            st.success(f"✅ Password for {acc['label']} saved.")
                             st.rerun()
 
                     if cancel_btn:
@@ -1164,44 +1164,44 @@ elif page == "BestPriceSkipBins":
         # Login & Screenshot section
         # -----------------------------------------------------------------------
         st.markdown("---")
-        st.subheader("ðŸŒ Login & Screenshot")
+        st.subheader("🌐 Login & Screenshot")
         st.caption("Log in to bestpriceskipbins.com.au/supplier/ with a saved account and take a screenshot.")
 
         _acc_labels = [f"Account {i+1} ({bpsb_accounts[i].get('username') or 'not set'})" for i in range(3)]
         _sel_acc = st.selectbox("Select account to log in with", _acc_labels, key="bpsb_login_acc_sel")
-        _sel_idx = int(_sel_acc.split()[1]) - 1  # "Account 1..." â†’ index 0
+        _sel_idx = int(_sel_acc.split()[1]) - 1  # "Account 1..." → index 0
 
         _login_delay = st.slider(
-            "â±ï¸ Page load delay after login (seconds)",
+            "⏱️ Page load delay after login (seconds)",
             min_value=2, max_value=20, value=6, step=1,
             key="bpsb_login_delay",
             help="Increase if the dashboard hasn't finished loading in the screenshot.",
         )
 
-        login_btn_main = st.button("ðŸ”‘ Login & Take Screenshot", type="primary", key="bpsb_login_btn")
+        login_btn_main = st.button("🔑 Login & Take Screenshot", type="primary", key="bpsb_login_btn")
 
         if login_btn_main:
             _login_acc = bpsb_accounts[_sel_idx]
             _login_user = _login_acc.get("username", "")
             _login_pwd  = _login_acc.get("password", "")
             if not _login_user or not _login_pwd:
-                st.error(f"âŒ {_login_acc['label']} has no username or password set. Please fill them in above first.")
+                st.error(f"❌ {_login_acc['label']} has no username or password set. Please fill them in above first.")
             else:
-                with st.spinner(f"ðŸ”‘ Logging in as {_login_acc['label']} ({_login_user})â€¦ waiting {_login_delay}s for page to load"):
+                with st.spinner(f"🔑 Logging in as {_login_acc['label']} ({_login_user})… waiting {_login_delay}s for page to load"):
                     _ok, _msg, _shot = BPSB.login(_login_user, _login_pwd, login_delay=_login_delay)
                 if _ok:
-                    st.success(f"âœ… {_msg}")
+                    st.success(f"✅ {_msg}")
                 else:
-                    st.error(f"âŒ {_msg}")
+                    st.error(f"❌ {_msg}")
                 if _shot:
-                    st.image(_shot, caption=f"Screenshot â€” {_login_acc['label']} ({_login_user})", width='stretch')
+                    st.image(_shot, caption=f"Screenshot — {_login_acc['label']} ({_login_user})", width='stretch')
 
     # -----------------------------------------------------------------------
     # Sub-tab: Update Rates
     # -----------------------------------------------------------------------
     with bpsb_tab_rates:
-        st.subheader("âœï¸ Update Rates â€” bestpriceskipbins.com.au")
-        st.caption("Log in once and update all bin sizes under 7.5 mÂ³ in a single run.")
+        st.subheader("✏️ Update Rates — bestpriceskipbins.com.au")
+        st.caption("Log in once and update all bin sizes under 7.5 m³ in a single run.")
         st.markdown("---")
 
         _rate_acc_labels = [f"Account {i+1} ({bpsb_accounts[i].get('username') or 'not set'})" for i in range(3)]
@@ -1218,7 +1218,7 @@ elif page == "BestPriceSkipBins":
         }
         _rate_waste = st.selectbox("Waste Type", list(_rate_waste_urls.keys()), key="bpsb_rate_waste")
 
-        st.markdown("##### Enter new prices for bin sizes < 7.5 mÂ³")
+        st.markdown("##### Enter new prices for bin sizes < 7.5 m³")
         st.caption("Leave a field blank to skip that size. Sizes are updated in order, one login session.")
 
         # (bin size label, sequential row id on the rates page)
@@ -1228,7 +1228,7 @@ elif page == "BestPriceSkipBins":
         for _ci, sz in enumerate(_lt75_sizes):
             with _size_cols[_ci % 3]:
                 _price_inputs[sz] = st.text_input(
-                    f"{sz} mÂ³",
+                    f"{sz} m³",
                     value="",
                     key=f"bpsb_rate_price_{sz}",
                     placeholder="e.g. 189",
@@ -1237,22 +1237,22 @@ elif page == "BestPriceSkipBins":
         _rate_r1, _rate_r2 = st.columns(2)
         with _rate_r1:
             _rate_login_delay = st.slider(
-                "â±ï¸ Login delay (s)", min_value=2, max_value=20, value=6, step=1, key="bpsb_rate_login_delay"
+                "⏱️ Login delay (s)", min_value=2, max_value=20, value=6, step=1, key="bpsb_rate_login_delay"
             )
         with _rate_r2:
             _rate_edit_delay = st.slider(
-                "â±ï¸ Per-row delay (s)", min_value=1, max_value=10, value=3, step=1, key="bpsb_rate_edit_delay",
+                "⏱️ Per-row delay (s)", min_value=1, max_value=10, value=3, step=1, key="bpsb_rate_edit_delay",
                 help="Wait time after navigating to each row's edit page before interacting."
             )
 
-        _rate_btn = st.button("âœï¸ Update All Sizes < 7.5 mÂ³", type="primary", key="bpsb_rate_btn")
+        _rate_btn = st.button("✏️ Update All Sizes < 7.5 m³", type="primary", key="bpsb_rate_btn")
 
         if _rate_btn:
             _racc = bpsb_accounts[_rate_idx]
             _ruser = _racc.get("username", "")
             _rpwd  = _racc.get("password", "")
             if not _ruser or not _rpwd:
-                st.error(f"âŒ {_racc['label']} has no username or password set. Fill them in the Sign In tab first.")
+                st.error(f"❌ {_racc['label']} has no username or password set. Fill them in the Sign In tab first.")
             else:
                 _updates = [
                     (sz, _price_inputs[sz].strip())
@@ -1260,14 +1260,14 @@ elif page == "BestPriceSkipBins":
                     if _price_inputs[sz].strip()
                 ]
                 if not _updates:
-                    st.warning("âš ï¸ Enter at least one price before updating.")
+                    st.warning("⚠️ Enter at least one price before updating.")
                 else:
                     _summary_preview = "  |  ".join(
-                        f"{sz} mÂ³ â†’ ${_price_inputs[sz].strip()}"
+                        f"{sz} m³ → ${_price_inputs[sz].strip()}"
                         for sz in _lt75_sizes if _price_inputs[sz].strip()
                     )
                     with st.spinner(
-                        f"âœï¸ Logging in as {_racc['label']} and updating {len(_updates)} size(s): {_summary_preview}â€¦"
+                        f"✏️ Logging in as {_racc['label']} and updating {len(_updates)} size(s): {_summary_preview}…"
                     ):
                         _rok, _rmsg, _rshot = BPSB.update_multiple_rates(
                             _ruser, _rpwd,
@@ -1277,9 +1277,9 @@ elif page == "BestPriceSkipBins":
                             edit_delay=_rate_edit_delay,
                         )
                     if _rok:
-                        st.success(f"âœ… Done!  {_rmsg}")
+                        st.success(f"✅ Done!  {_rmsg}")
                     else:
-                        st.error(f"âŒ {_rmsg}")
+                        st.error(f"❌ {_rmsg}")
                     if _rshot:
                         st.image(_rshot, caption="Screenshot after all updates", width='stretch')
 
@@ -1288,7 +1288,7 @@ elif page == "BestPriceSkipBins":
 # ===========================================================================
 
 elif page == "SkipBinFinder":
-    st.title("ðŸ” SkipBinFinder â€” Supplier Sign In")
+    st.title("🔍 SkipBinFinder — Supplier Sign In")
     st.markdown("Log in to your SkipBinFinder supplier account.")
     st.markdown("---")
     st.info("Login automation for SkipBinFinder is not yet configured.")
@@ -1298,8 +1298,7 @@ elif page == "SkipBinFinder":
 # ===========================================================================
 
 elif page == "SkipBinsOnline":
-    st.title("ðŸŒ SkipBinsOnline â€” Supplier Sign In")
+    st.title("🌐 SkipBinsOnline — Supplier Sign In")
     st.markdown("Log in to your SkipBinsOnline supplier account.")
     st.markdown("---")
     st.info("Login automation for SkipBinsOnline is not yet configured.")
-
