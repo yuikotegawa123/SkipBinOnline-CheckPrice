@@ -109,7 +109,8 @@ def _load_cache(path: str) -> Optional[dict]:
 
 import requests as _requests
 
-_GIST_FILENAME = "bab_accounts.json"
+_GIST_FILENAME      = "bab_accounts.json"
+_GIST_BPSB_FILENAME = "bpsb_accounts.json"
 
 def _gist_token() -> Optional[str]:
     """Return GitHub token from st.secrets, or None if not configured."""
@@ -161,6 +162,46 @@ def _gist_save(accounts: list) -> bool:
             f"https://api.github.com/gists/{gid}",
             headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
             json={"files": {_GIST_FILENAME: {"content": json.dumps(accounts, indent=2)}}},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        return True
+    except Exception:
+        return False
+
+def _gist_load_bpsb() -> Optional[list]:
+    """Fetch BPSB account list from the Gist (bpsb_accounts.json file)."""
+    token = _gist_token()
+    gid   = _gist_id()
+    if not token or not gid:
+        return None
+    try:
+        resp = _requests.get(
+            f"https://api.github.com/gists/{gid}",
+            headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        files = resp.json().get("files", {})
+        if _GIST_BPSB_FILENAME not in files:
+            return None
+        content = files[_GIST_BPSB_FILENAME]["content"]
+        data = json.loads(content)
+        return data if isinstance(data, list) else None
+    except Exception:
+        return None
+
+def _gist_save_bpsb(accounts: list) -> bool:
+    """Write BPSB account list to the Gist (bpsb_accounts.json file)."""
+    token = _gist_token()
+    gid   = _gist_id()
+    if not token or not gid:
+        return False
+    try:
+        resp = _requests.patch(
+            f"https://api.github.com/gists/{gid}",
+            headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
+            json={"files": {_GIST_BPSB_FILENAME: {"content": json.dumps(accounts, indent=2)}}},
             timeout=8,
         )
         resp.raise_for_status()
@@ -226,9 +267,11 @@ if "bab_accounts" not in st.session_state:
 if "bab_acc_unlocked" not in st.session_state:
     st.session_state["bab_acc_unlocked"] = [False, False, False]
 
-# BPSB accounts (stored locally only, no Gist)
+# BPSB accounts (Gist primary, local cache fallback)
 if "bpsb_accounts" not in st.session_state:
-    _bpsb_acc = _load_cache(os.path.join(_CACHE_DIR, "bpsb_accounts.json"))
+    _bpsb_acc = _gist_load_bpsb()
+    if not isinstance(_bpsb_acc, list):
+        _bpsb_acc = _load_cache(os.path.join(_CACHE_DIR, "bpsb_accounts.json"))
     if not isinstance(_bpsb_acc, list):
         _bpsb_acc = []
     _bpsb_acc = [a if isinstance(a, dict) else {} for a in _bpsb_acc]
@@ -1060,6 +1103,7 @@ elif page == "BestPriceSkipBins":
                     _changed = True
                 if _changed:
                     _save_cache(_BPSB_ACC_CACHE, bpsb_accounts)
+                    _gist_save_bpsb(bpsb_accounts)
                     st.rerun()
 
                 if not bpsb_unlocked[i]:
@@ -1105,6 +1149,7 @@ elif page == "BestPriceSkipBins":
                         else:
                             bpsb_accounts[i]["password"] = new_pwd
                             _save_cache(_BPSB_ACC_CACHE, bpsb_accounts)
+                            _gist_save_bpsb(bpsb_accounts)
                             bpsb_unlocked[i] = False
                             st.session_state["bpsb_acc_unlocked"] = bpsb_unlocked
                             st.success(f"✅ Password for {acc['label']} saved.")
