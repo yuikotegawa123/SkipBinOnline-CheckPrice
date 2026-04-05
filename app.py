@@ -871,7 +871,20 @@ elif page == "BestPriceSkipBins":
                     "Other accounts: "
                     + "  |  ".join(f"{a['label']}: `{a['username']}` (postcode {a.get('postcode') or 'not set'})" for a in _unmatched)
                 )
-            _bpsb_lt75 = [s for s in BPSB.ALL_SIZES if float(s) < 7.5]
+            _bpsb_lt12 = [s for s in BPSB.ALL_SIZES if float(s) < 12]
+            _BPSB_EXTRA_SIZES = ["15", "16", "20", "30"]
+            _BPSB_LARGE_WTS   = {"General Waste", "Green Garden Waste"}
+
+            def _edit_sizes_for(wt):
+                """Return the sizes to edit for a given waste type."""
+                base = [s for s in _bpsb_lt12 if s in _orig_prices.get(wt, {})]
+                if wt in _BPSB_LARGE_WTS:
+                    extras = [s for s in _BPSB_EXTRA_SIZES if s in _orig_prices.get(wt, {})]
+                    return base + extras
+                return base
+
+            # Header columns show all possible sizes (union, for display)
+            _bpsb_display_sizes = _bpsb_lt12 + _BPSB_EXTRA_SIZES
             # Read orig_prices from session state — only present after a fresh search
             _orig_prices = st.session_state.get("bpsb_edited_prices", {})
 
@@ -887,12 +900,12 @@ elif page == "BestPriceSkipBins":
                 _queue = st.session_state["bpsb_wt_queue"]
 
                 # One st.columns row per data row — same widths for header and data ensure alignment
-                _col_widths = [2] + [1] * len(_bpsb_lt75) + [1, 1]
+                _col_widths = [2] + [1] * len(_bpsb_display_sizes) + [1, 1]
 
                 # Header row (button columns intentionally empty)
                 _hdr = st.columns(_col_widths)
                 _hdr[0].markdown("**Waste Type**")
-                for _hi, _sz in enumerate(_bpsb_lt75):
+                for _hi, _sz in enumerate(_bpsb_display_sizes):
                     _hdr[1 + _hi].markdown(f"**{_sz} m³**")
                 st.divider()
 
@@ -905,9 +918,15 @@ elif page == "BestPriceSkipBins":
                     _queued = _queue.get(_wt_i)
                     _name_label = f"{'⏳ ' if _queued else ''}{_wt}{'  *(undo)*' if _queued == 'undo' else '  *(edit)*' if _queued == 'edit' else ''}"
                     _row[0].markdown(_name_label)
-                    for _ci, _sz in enumerate(_bpsb_lt75):
+                    _wt_edit_szs = set(_edit_sizes_for(_wt))
+                    for _ci, _sz in enumerate(_bpsb_display_sizes):
                         _pr = _orig_prices.get(_wt, {}).get(_sz)
-                        _row[1 + _ci].write(f"${_pr - 1:,.0f}" if _pr is not None else "N/A")
+                        if _pr is not None and _sz in _wt_edit_szs:
+                            _row[1 + _ci].write(f"${_pr - 1:,.0f}")
+                        elif _pr is not None:
+                            _row[1 + _ci].write(f"${_pr:,.0f}")
+                        else:
+                            _row[1 + _ci].write("N/A")
                     _edit_btns.append(_row[-2].button(
                         "✏️ Edit", key=f"bpsb_wt_edit_{_wt_i}",
                         disabled=_edit_acc is None, width='stretch',
@@ -977,13 +996,13 @@ elif page == "BestPriceSkipBins":
                 def _run_wt_edit(wt, undo=False):
                     """Run a single waste-type edit; stores result in session state."""
                     idx = list(BPSB.WASTE_TYPES.keys()).index(wt)
-                    wt_sizes = [s for s in _bpsb_lt75 if s in _orig_prices.get(wt, {})]
+                    wt_sizes = _edit_sizes_for(wt)
                     if undo:
                         wt_updates = [(s, str(int(_orig_prices[wt][s]))) for s in wt_sizes]
                     else:
                         wt_updates = [(s, str(int(_orig_prices[wt][s]) - 1)) for s in wt_sizes]
                     if not wt_updates:
-                        result = {"ok": False, "msg": f"{wt}: No priced sizes < 7.5 m³ found."}
+                        result = {"ok": False, "msg": f"{wt}: No priced sizes < 12 m³ found."}
                         st.session_state[f"bpsb_wt_result_{idx}"] = result
                         st.session_state.setdefault("bpsb_last_run_summary", []).append(result)
                         return
@@ -1024,7 +1043,7 @@ elif page == "BestPriceSkipBins":
 
                     if _edit_all or _undo_all:
                         _is_undo_all = bool(_undo_all)
-                        _all_wts = [wt for wt in BPSB.WASTE_TYPES if any(s in _orig_prices.get(wt, {}) for s in _bpsb_lt75)]
+                        _all_wts = [wt for wt in BPSB.WASTE_TYPES if _edit_sizes_for(wt)]
                         st.session_state["bpsb_last_run_summary"] = []
                         with st.spinner(f"{'Undo' if _is_undo_all else 'Edit'} All: {len(_all_wts)} waste types in parallel…"):
                             with concurrent.futures.ThreadPoolExecutor(max_workers=len(_all_wts)) as _pool:
