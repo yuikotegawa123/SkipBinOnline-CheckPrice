@@ -539,14 +539,13 @@ elif page == "BookABin":
             # ---------------------------------------------------------------
             st.subheader("💲 Update Price")
             st.caption(
-                "Rule: all types → price − 1 for ≤ 12 m³  |  "
-                "General Waste & Green Garden Waste also − 1 for 15, 16, 20, 30 m³  |  "
-                "all other sizes → unchanged"
+                "Rule: **General Waste & Green Garden Waste** → price − 1 for ≤ 12 m³ and 15, 16, 20, 30 m³  |  "
+                "all other waste types → price unchanged"
             )
 
-            # Waste types that get price-1 for the extra large sizes
-            _EXTRA_MINUS1_WTS  = {'General Waste', 'Green Garden Waste'}
-            _EXTRA_MINUS1_SZFS = {15.0, 16.0, 20.0, 30.0}
+            # Only these two waste types get price-1
+            _MINUS1_WTS    = {'General Waste', 'Green Garden Waste'}
+            _EXTRA_SZFS    = {15.0, 16.0, 20.0, 30.0}
 
             # Build price_map: (waste_type, size) → will_set_to
             _price_map = {}   # (wt, sz) → will_set_to
@@ -557,9 +556,7 @@ elif page == "BookABin":
                             _sz_f = float(_sz)
                         except (ValueError, TypeError):
                             _sz_f = 0.0
-                        if _sz_f <= 12.0:
-                            _adj = int(_pr) - 1
-                        elif _wt in _EXTRA_MINUS1_WTS and _sz_f in _EXTRA_MINUS1_SZFS:
+                        if _wt in _MINUS1_WTS and (_sz_f <= 12.0 or _sz_f in _EXTRA_SZFS):
                             _adj = int(_pr) - 1
                         else:
                             _adj = int(_pr)
