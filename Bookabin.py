@@ -713,7 +713,7 @@ def _normalise_date_variants(date_str: str) -> list:
     return variants
 
 
-def _find_date_col_index(driver, from_date: str) -> int | None:
+def _find_date_col_index(driver, from_date: str):
     """
     Scan the table header row(s) for a cell whose text contains the from_date.
     Returns the 0-based <th>/<td> column index of that cell, or None if not found.
