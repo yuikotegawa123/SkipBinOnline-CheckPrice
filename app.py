@@ -870,7 +870,7 @@ elif page == "BestPriceSkipBins":
                     "Other accounts: "
                     + "  |  ".join(f"{a['label']}: `{a['username']}` (postcode {a.get('postcode') or 'not set'})" for a in _unmatched)
                 )
-            _bpsb_lt12 = [s for s in BPSB.ALL_SIZES if float(s) < 12]
+            _bpsb_lt12 = [s for s in BPSB.ALL_SIZES if float(s) <= 12]
             _BPSB_EXTRA_SIZES = ["15", "16", "20", "30"]
             _BPSB_LARGE_WTS   = {"General Waste", "Green Garden Waste"}
 
