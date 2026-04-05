@@ -786,12 +786,11 @@ elif page == "BestPriceSkipBins":
                 st.session_state["bpsb_search_pc"]  = bpsb_postcode
                 st.session_state["bpsb_search_dod"] = bpsb_dod_raw
                 st.session_state["bpsb_search_pud"] = bpsb_pud_raw
-                # Compute edited prices (< 7.5 m³) — stored separately, NOT in disk cache
-                _lt75 = [s for s in BPSB.ALL_SIZES if float(s) < 7.5]
+                # Compute edited prices — store all sizes available from the scraper
                 _ep = {}
                 for _wt in BPSB.WASTE_TYPES:
                     _ep[_wt] = {}
-                    for _sz in _lt75:
+                    for _sz in BPSB.ALL_SIZES:
                         _pr = _fetched.get(_wt, {}).get(_sz)
                         if isinstance(_pr, (int, float)):
                             _ep[_wt][_sz] = _pr
