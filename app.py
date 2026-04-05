@@ -86,7 +86,7 @@ def _save_cache(path: str, data: dict) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f)
 
-def _load_cache(path: str) -> dict | None:
+def _load_cache(path: str) -> Optional[dict]:
     """Load dict from JSON file; return None if missing or corrupt."""
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -106,25 +106,26 @@ def _load_cache(path: str) -> dict | None:
 # The Gist must contain a file called  "bab_accounts.json".
 # ---------------------------------------------------------------------------
 
+from typing import Optional
 import requests as _requests
 
 _GIST_FILENAME = "bab_accounts.json"
 
-def _gist_token() -> str | None:
+def _gist_token() -> Optional[str]:
     """Return GitHub token from st.secrets, or None if not configured."""
     try:
         return st.secrets["gist"]["token"]
     except Exception:
         return None
 
-def _gist_id() -> str | None:
+def _gist_id() -> Optional[str]:
     """Return Gist ID from st.secrets, or None if not configured."""
     try:
         return st.secrets["gist"]["gist_id"]
     except Exception:
         return None
 
-def _gist_load() -> list | None:
+def _gist_load() -> Optional[list]:
     """
     Fetch account list from the private GitHub Gist.
     Returns the parsed list, or None on any error / not configured.
