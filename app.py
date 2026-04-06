@@ -69,6 +69,7 @@ _CACHE_DIR     = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cach
 _BAB_CACHE     = os.path.join(_CACHE_DIR, "bab_results.json")
 _BPSB_CACHE    = os.path.join(_CACHE_DIR, "bpsb_results.json")
 _SBF_CACHE     = os.path.join(_CACHE_DIR, "sbf_results.json")
+_SBO_CACHE     = os.path.join(_CACHE_DIR, "sbo_results.json")
 
 _DEFAULT_ACCOUNTS = [
     {"label": "Account 1", "supplier_id": "", "password": "", "postcode": "3173"},
@@ -83,6 +84,12 @@ _DEFAULT_BPSB_ACCOUNTS = [
 ]
 
 _DEFAULT_SBF_ACCOUNTS = [
+    {"label": "Account 1", "username": "", "password": "", "postcode": "3173"},
+    {"label": "Account 2", "username": "", "password": "", "postcode": "3130"},
+    {"label": "Account 3", "username": "", "password": "", "postcode": "3199"},
+]
+
+_DEFAULT_SBO_ACCOUNTS = [
     {"label": "Account 1", "username": "", "password": "", "postcode": "3173"},
     {"label": "Account 2", "username": "", "password": "", "postcode": "3130"},
     {"label": "Account 3", "username": "", "password": "", "postcode": "3199"},
@@ -119,6 +126,7 @@ import requests as _requests
 _GIST_FILENAME      = "bab_accounts.json"
 _GIST_BPSB_FILENAME = "bpsb_accounts.json"
 _GIST_SBF_FILENAME  = "sbf_accounts.json"
+_GIST_SBO_FILENAME  = "sbo_accounts.json"
 
 def _gist_token() -> Optional[str]:
     """Return GitHub token from st.secrets, or None if not configured."""
@@ -257,6 +265,46 @@ def _gist_save_sbf(accounts: list) -> bool:
     except Exception:
         return False
 
+def _gist_load_sbo() -> Optional[list]:
+    """Fetch SBO account list from the Gist (sbo_accounts.json file)."""
+    token = _gist_token()
+    gid   = _gist_id()
+    if not token or not gid:
+        return None
+    try:
+        resp = _requests.get(
+            f"https://api.github.com/gists/{gid}",
+            headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        files = resp.json().get("files", {})
+        if _GIST_SBO_FILENAME not in files:
+            return None
+        content = files[_GIST_SBO_FILENAME]["content"]
+        data = json.loads(content)
+        return data if isinstance(data, list) else None
+    except Exception:
+        return None
+
+def _gist_save_sbo(accounts: list) -> bool:
+    """Write SBO account list to the Gist (sbo_accounts.json file)."""
+    token = _gist_token()
+    gid   = _gist_id()
+    if not token or not gid:
+        return False
+    try:
+        resp = _requests.patch(
+            f"https://api.github.com/gists/{gid}",
+            headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
+            json={"files": {_GIST_SBO_FILENAME: {"content": json.dumps(accounts, indent=2)}}},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        return True
+    except Exception:
+        return False
+
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -359,6 +407,33 @@ if "sbf_results" not in st.session_state:
         st.session_state["sbf_search_pc"]  = _cached_sbf.get("pc", "")
         st.session_state["sbf_search_dod"] = _cached_sbf.get("dod", "")
         st.session_state["sbf_search_pud"] = _cached_sbf.get("pud", "")
+
+# SBO accounts
+if "sbo_accounts" not in st.session_state:
+    _sbo_acc = _gist_load_sbo()
+    if not isinstance(_sbo_acc, list):
+        _sbo_acc = _load_cache(os.path.join(_CACHE_DIR, "sbo_accounts.json"))
+    if not isinstance(_sbo_acc, list):
+        _sbo_acc = []
+    _sbo_acc = [a if isinstance(a, dict) else {} for a in _sbo_acc]
+    while len(_sbo_acc) < 3:
+        _sbo_acc.append({})
+    for _idx, _def in enumerate(_DEFAULT_SBO_ACCOUNTS):
+        for _k, _v in _def.items():
+            _sbo_acc[_idx].setdefault(_k, _v)
+    st.session_state["sbo_accounts"] = _sbo_acc[:3]
+
+if "sbo_acc_unlocked" not in st.session_state:
+    st.session_state["sbo_acc_unlocked"] = [False, False, False]
+
+# SBO results cache
+if "sbo_results" not in st.session_state:
+    _cached_sbo = _load_cache(_SBO_CACHE)
+    if _cached_sbo:
+        st.session_state["sbo_results"]    = _cached_sbo.get("results", {})
+        st.session_state["sbo_search_pc"]  = _cached_sbo.get("pc", "")
+        st.session_state["sbo_search_dod"] = _cached_sbo.get("dod", "")
+        st.session_state["sbo_search_pud"] = _cached_sbo.get("pud", "")
 
 def _go_home():
     st.session_state.page = "Home"
@@ -1654,7 +1729,492 @@ elif page == "SkipBinFinder":
 # ===========================================================================
 
 elif page == "SkipBinsOnline":
-    st.title("🌐 SkipBinsOnline — Supplier Sign In")
-    st.markdown("Log in to your SkipBinsOnline supplier account.")
+    st.title("🌐 SkipBinsOnline")
     st.markdown("---")
-    st.info("Login automation for SkipBinsOnline is not yet configured.")
+
+    sbo_tab_prices, sbo_tab_signin, sbo_tab_rates = st.tabs(["🔍 Check Price", "🔐 Sign In Information", "✏️ Update Rates"])
+
+    # -----------------------------------------------------------------------
+    # Sub-tab: Check Price
+    # -----------------------------------------------------------------------
+    with sbo_tab_prices:
+        st.subheader("Check Prices — skipbinsonline.com.au")
+        st.caption("Search live prices from SkipBinsOnline for your postcode and hire period.")
+
+        sbo_col1, sbo_col2, sbo_col3, sbo_col4 = st.columns([1, 1.4, 1.4, 1])
+        with sbo_col1:
+            sbo_postcode = st.text_input("Postcode", value="3173", key="sbo_pc")
+        with sbo_col2:
+            sbo_dod = st.text_input("Delivery Date (D/MM/YYYY)", value="1/04/2026", key="sbo_dod")
+        with sbo_col3:
+            sbo_pud = st.text_input("Pickup Date (D/MM/YYYY)", value="8/04/2026", key="sbo_pud")
+        with sbo_col4:
+            st.write("")
+            st.write("")
+            sbo_search = st.button("🔍 Search SkipBinsOnline", width='stretch', type="primary", key="sbo_search")
+
+        if sbo_search:
+            if not sbo_postcode or not sbo_dod or not sbo_pud:
+                st.error("Please fill in all fields.")
+                st.stop()
+
+            def _run_sbo(run_fn, *args):
+                cell_q   = queue.Queue()
+                status_q = queue.Queue()
+                done     = threading.Event()
+                threading.Thread(target=run_fn, args=(*args, cell_q, status_q, done), daemon=True).start()
+                done.wait()
+                out = {}
+                while not cell_q.empty():
+                    wt, size, price = cell_q.get_nowait()
+                    out.setdefault(wt, {})[size] = price
+                return out
+
+            with st.spinner("🔍 Fetching prices from SkipBinsOnline… (this may take a minute)"):
+                _fetched = _run_sbo(SBO.run_search, sbo_postcode, sbo_dod, sbo_pud)
+
+            if not _fetched:
+                st.warning("No data returned from SkipBinsOnline. Check the postcode and dates, then try again.")
+                st.session_state.pop("sbo_results", None)
+            else:
+                st.session_state["sbo_results"]    = _fetched
+                st.session_state["sbo_search_pc"]  = sbo_postcode
+                st.session_state["sbo_search_dod"] = sbo_dod
+                st.session_state["sbo_search_pud"] = sbo_pud
+                _ep_sbo = {}
+                for _wt in _fetched:
+                    _ep_sbo[_wt] = {}
+                    for _sz, _pr in _fetched[_wt].items():
+                        if isinstance(_pr, (int, float)):
+                            _ep_sbo[_wt][_sz] = _pr
+                st.session_state["sbo_edited_prices"] = _ep_sbo
+                _save_cache(_SBO_CACHE, {
+                    "results": _fetched,
+                    "pc":      sbo_postcode,
+                    "dod":     sbo_dod,
+                    "pud":     sbo_pud,
+                })
+
+        if "sbo_results" in st.session_state:
+            sbo_results  = st.session_state["sbo_results"]
+            saved_pc  = st.session_state.get("sbo_search_pc", "")
+            saved_dod = st.session_state.get("sbo_search_dod", "")
+            saved_pud = st.session_state.get("sbo_search_pud", "")
+
+            st.success(
+                f"✅ Done — Postcode **{saved_pc}**  |  {saved_dod} → {saved_pud}  |  SkipBinsOnline prices loaded."
+            )
+
+            st.subheader("💰 Cheapest Available Price")
+            cheapest_price = None
+            cheapest_wt    = None
+            cheapest_size  = None
+            for wt, sizes in sbo_results.items():
+                for sz, pr in sizes.items():
+                    if isinstance(pr, (int, float)):
+                        if cheapest_price is None or pr < cheapest_price:
+                            cheapest_price = pr
+                            cheapest_wt    = wt
+                            cheapest_size  = sz
+
+            if cheapest_price is not None:
+                ch_col1, ch_col2, ch_col3 = st.columns(3)
+                ch_col1.metric("Waste Type", cheapest_wt)
+                ch_col2.metric("Bin Size",   f"{cheapest_size} m³")
+                ch_col3.metric("Best Price", f"${cheapest_price:,.0f}")
+            else:
+                st.info("No priced results found for this postcode / date range.")
+
+            st.markdown("---")
+
+            st.subheader("📋 All Available Sizes")
+            _sbo_waste = {wt: list(sizes.keys()) for wt, sizes in sbo_results.items()}
+            st.dataframe(_to_df(sbo_results, _sbo_waste, SBO.ALL_SIZES), width='stretch')
+
+            st.markdown("---")
+
+            # ---------------------------------------------------------------
+            # Edited Price section (price − 1 for General Waste / Green Waste ≤ 12 m³)
+            # ---------------------------------------------------------------
+            st.subheader("✏️ Edited Price (< 7.5 m³,  price − 1)")
+
+            _sbo_accs = st.session_state.get("sbo_accounts", [])
+            _sbo_matched = [
+                a for a in _sbo_accs
+                if a.get("postcode", "").strip() == saved_pc.strip() and a.get("username", "").strip()
+            ]
+            _sbo_unmatched = [
+                a for a in _sbo_accs
+                if a.get("postcode", "").strip() != saved_pc.strip() and a.get("username", "").strip()
+            ]
+            if _sbo_matched:
+                st.success(
+                    "**Accounts linked to postcode " + saved_pc + ":** "
+                    + "  |  ".join(f"✅ {a['label']}: `{a['username']}`" for a in _sbo_matched)
+                )
+            else:
+                st.warning(f"⚠️ No saved account has postcode **{saved_pc}**.")
+            if _sbo_unmatched:
+                st.caption(
+                    "Other accounts: "
+                    + "  |  ".join(f"{a['label']}: `{a['username']}` (postcode {a.get('postcode') or 'not set'})" for a in _sbo_unmatched)
+                )
+
+            _sbo_lt75 = [s for s in SBO.ALL_SIZES if float(s) < 7.5]
+            _sbo_orig  = st.session_state.get("sbo_edited_prices", {})
+
+            def _sbo_edit_sizes_for(wt):
+                return [s for s in _sbo_lt75 if s in _sbo_orig.get(wt, {})]
+
+            if not _sbo_orig:
+                st.info("Run a price search above to populate the Edited Price table.")
+            else:
+                _sbo_edit_acc = _sbo_matched[0] if _sbo_matched else None
+                _sbo_wt_list  = [wt for wt in sbo_results if _sbo_edit_sizes_for(wt)]
+                _sbo_col_widths = [2] + [1] * len(_sbo_lt75) + [1, 1]
+
+                if "sbo_wt_queue" not in st.session_state:
+                    st.session_state["sbo_wt_queue"] = {}
+                _sbo_queue = st.session_state["sbo_wt_queue"]
+
+                _sbo_hdr = st.columns(_sbo_col_widths)
+                _sbo_hdr[0].markdown("**Waste Type**")
+                for _hi, _sz in enumerate(_sbo_lt75):
+                    _sbo_hdr[1 + _hi].markdown(f"**{_sz} m³**")
+                st.divider()
+
+                _sbo_edit_btns = []
+                _sbo_undo_btns = []
+                for _wt_i, _wt in enumerate(_sbo_wt_list):
+                    _row = st.columns(_sbo_col_widths)
+                    _queued = _sbo_queue.get(_wt_i)
+                    _name_label = f"{'⏳ ' if _queued else ''}{_wt}{'  *(undo)*' if _queued == 'undo' else '  *(edit)*' if _queued == 'edit' else ''}"
+                    _row[0].markdown(_name_label)
+                    for _ci, _sz in enumerate(_sbo_lt75):
+                        _pr = _sbo_orig.get(_wt, {}).get(_sz)
+                        if _pr is not None:
+                            _row[1 + _ci].write(f"${_pr - 1:,.0f}")
+                        else:
+                            _row[1 + _ci].write("N/A")
+                    _sbo_edit_btns.append(_row[-2].button(
+                        "✏️ Edit", key=f"sbo_wt_edit_{_wt_i}",
+                        disabled=_sbo_edit_acc is None, width='stretch',
+                    ))
+                    _sbo_undo_btns.append(_row[-1].button(
+                        "↩️ Undo", key=f"sbo_wt_undo_{_wt_i}",
+                        disabled=_sbo_edit_acc is None, width='stretch',
+                    ))
+
+                for _wt_i, _wt in enumerate(_sbo_wt_list):
+                    if _sbo_edit_btns[_wt_i] and _sbo_edit_acc:
+                        if _sbo_queue.get(_wt_i) == "edit":
+                            del _sbo_queue[_wt_i]
+                        else:
+                            _sbo_queue[_wt_i] = "edit"
+                        st.rerun()
+                    if _sbo_undo_btns[_wt_i] and _sbo_edit_acc:
+                        if _sbo_queue.get(_wt_i) == "undo":
+                            del _sbo_queue[_wt_i]
+                        else:
+                            _sbo_queue[_wt_i] = "undo"
+                        st.rerun()
+
+                st.markdown("#### 🗂 Queue")
+                if not _sbo_queue:
+                    st.caption("No actions queued. Click ✏️ Edit or ↩️ Undo above to add.")
+                else:
+                    _q_hdr = st.columns([3, 1, 1])
+                    _q_hdr[0].markdown("**Waste Type**")
+                    _q_hdr[1].markdown("**Action**")
+                    _q_hdr[2].markdown("**Remove**")
+                    for _qi, (_q_idx, _q_action) in enumerate(list(_sbo_queue.items())):
+                        _q_wt = _sbo_wt_list[_q_idx]
+                        _qc = st.columns([3, 1, 1])
+                        _qc[0].write(_q_wt)
+                        _qc[1].write("✏️ Edit" if _q_action == "edit" else "↩️ Undo")
+                        if _qc[2].button("🗑️", key=f"sbo_q_del_{_qi}_{_q_idx}", width='stretch'):
+                            del _sbo_queue[_q_idx]
+                            st.rerun()
+
+                _sbo_last_run = st.session_state.get("sbo_last_run_summary", [])
+                if _sbo_last_run:
+                    st.markdown("#### 📋 Last Run Results")
+                    _ok_items  = [r for r in _sbo_last_run if r["ok"]]
+                    _err_items = [r for r in _sbo_last_run if not r["ok"]]
+                    if _ok_items:
+                        st.success("**Done:**\n" + "\n".join(f"- {r['msg']}" for r in _ok_items))
+                    if _err_items:
+                        st.error("**Failed:**\n" + "\n".join(f"- {r['msg']}" for r in _err_items))
+                    if st.button("✖ Clear results", key="sbo_clear_results"):
+                        st.session_state["sbo_last_run_summary"] = []
+                        st.rerun()
+                    st.markdown("---")
+
+                def _run_sbo_wt_edit(wt, undo=False):
+                    idx      = _sbo_wt_list.index(wt)
+                    wt_sizes = _sbo_edit_sizes_for(wt)
+                    if undo:
+                        wt_updates = [(s, str(int(_sbo_orig[wt][s]))) for s in wt_sizes]
+                    else:
+                        wt_updates = [(s, str(int(_sbo_orig[wt][s]) - 1)) for s in wt_sizes]
+                    if not wt_updates:
+                        result = {"ok": False, "msg": f"{wt}: No priced sizes < 7.5 m³ found."}
+                        st.session_state[f"sbo_wt_result_{idx}"] = result
+                        st.session_state.setdefault("sbo_last_run_summary", []).append(result)
+                        return
+                    ok, msg = SBO.update_waste_type_rates(
+                        _sbo_edit_acc["username"], _sbo_edit_acc["password"],
+                        waste_type=wt, updates=wt_updates,
+                        login_delay=6, edit_delay=3,
+                    )
+                    result = {"ok": ok, "msg": f"{wt} — {msg}"}
+                    st.session_state[f"sbo_wt_result_{idx}"] = result
+                    st.session_state.setdefault("sbo_last_run_summary", []).append(result)
+
+                if _sbo_edit_acc:
+                    import concurrent.futures as _cf
+                    _sbo_btn_row = st.columns([1, 1, 1, 5])
+                    _sbo_run_queue_btn = _sbo_btn_row[0].button(
+                        f"▶ Run Queue ({len(_sbo_queue)})" if _sbo_queue else "▶ Run Queue",
+                        key="sbo_run_queue",
+                        disabled=not _sbo_queue,
+                        width='stretch',
+                    )
+                    _sbo_edit_all = _sbo_btn_row[1].button("✏️ Edit All", key="sbo_edit_all", width='stretch')
+                    _sbo_undo_all = _sbo_btn_row[2].button("↩️ Undo All", key="sbo_undo_all", width='stretch')
+
+                    if _sbo_run_queue_btn and _sbo_queue:
+                        _items = list(_sbo_queue.items())
+                        _wts_to_run = [(_sbo_wt_list[i], v == "undo") for i, v in _items]
+                        st.session_state["sbo_last_run_summary"] = []
+                        with st.spinner(f"Running {len(_wts_to_run)} queued item(s) in parallel…"):
+                            with _cf.ThreadPoolExecutor(max_workers=len(_wts_to_run)) as _pool:
+                                _futures = [_pool.submit(_run_sbo_wt_edit, wt, undo) for wt, undo in _wts_to_run]
+                                _cf.wait(_futures)
+                        st.session_state["sbo_wt_queue"] = {}
+                        st.rerun()
+
+                    if _sbo_edit_all or _sbo_undo_all:
+                        _is_undo = bool(_sbo_undo_all)
+                        st.session_state["sbo_last_run_summary"] = []
+                        with st.spinner(f"{'Undo' if _is_undo else 'Edit'} All: {len(_sbo_wt_list)} waste types in parallel…"):
+                            with _cf.ThreadPoolExecutor(max_workers=len(_sbo_wt_list)) as _pool:
+                                _futures = [_pool.submit(_run_sbo_wt_edit, wt, _is_undo) for wt in _sbo_wt_list]
+                                _cf.wait(_futures)
+                        st.session_state["sbo_wt_queue"] = {}
+                        st.rerun()
+
+    # -----------------------------------------------------------------------
+    # Sub-tab: Sign In Information
+    # -----------------------------------------------------------------------
+    with sbo_tab_signin:
+        st.subheader("🔐 Sign In Information — skipbinsonline.com.au")
+        st.caption("Saved credentials for up to 3 SkipBinsOnline supplier accounts. Passwords are hidden and protected.")
+        st.markdown("---")
+
+        sbo_accounts = st.session_state["sbo_accounts"]
+        sbo_unlocked = st.session_state["sbo_acc_unlocked"]
+        _SBO_ACC_CACHE = os.path.join(_CACHE_DIR, "sbo_accounts.json")
+
+        for i in range(3):
+            acc = sbo_accounts[i]
+            with st.expander(
+                f"**{acc['label']}**  —  Postcode: `{acc.get('postcode') or '(not set)'}`  |  Username: `{acc.get('username') or '(not set)'}`",
+                expanded=True,
+            ):
+                v1, v2, v3 = st.columns([1, 1, 1])
+                with v1:
+                    new_pc = st.text_input(
+                        "Postcode",
+                        value=acc.get("postcode", ""),
+                        key=f"sbo_postcode_{i}",
+                    )
+                with v2:
+                    new_user = st.text_input(
+                        "Username",
+                        value=acc.get("username", ""),
+                        key=f"sbo_user_{i}",
+                    )
+                with v3:
+                    masked = "••••••••" if acc.get("password") else "(not set)"
+                    st.text_input(
+                        "Password",
+                        value=masked,
+                        disabled=True,
+                        key=f"sbo_pwd_display_{i}",
+                    )
+
+                _changed = False
+                if new_pc != acc.get("postcode", ""):
+                    sbo_accounts[i]["postcode"] = new_pc
+                    _changed = True
+                if new_user != acc.get("username", ""):
+                    sbo_accounts[i]["username"] = new_user
+                    _changed = True
+                if _changed:
+                    _save_cache(_SBO_ACC_CACHE, sbo_accounts)
+                    _gist_save_sbo(sbo_accounts)
+                    st.rerun()
+
+                if not sbo_unlocked[i]:
+                    st.markdown("🔒 **Password is locked.** Enter the current password to unlock and change it.")
+                    ul1, ul2 = st.columns([2, 1])
+                    with ul1:
+                        entered = st.text_input(
+                            "Enter current password to unlock",
+                            type="password",
+                            key=f"sbo_unlock_{i}",
+                        )
+                    with ul2:
+                        st.write("")
+                        st.write("")
+                        unlock_btn = st.button("🔓 Unlock", key=f"sbo_unlock_btn_{i}")
+
+                    if unlock_btn:
+                        if not acc.get("password") or entered == acc["password"]:
+                            sbo_unlocked[i] = True
+                            st.session_state["sbo_acc_unlocked"] = sbo_unlocked
+                            st.rerun()
+                        else:
+                            st.error("❌ Incorrect password.")
+                else:
+                    st.markdown("🔓 **Unlocked.** Set a new password below.")
+                    e1, e2, e3 = st.columns([2, 2, 1])
+                    with e1:
+                        new_pwd = st.text_input("New Password", type="password", key=f"sbo_newpwd_{i}")
+                    with e2:
+                        confirm_pwd = st.text_input("Confirm Password", type="password", key=f"sbo_confirmpwd_{i}")
+                    with e3:
+                        st.write("")
+                        st.write("")
+                        save_btn = st.button("💾 Save", key=f"sbo_savepwd_{i}", type="primary")
+
+                    cancel_btn = st.button("🔒 Cancel & Lock", key=f"sbo_cancel_{i}")
+
+                    if save_btn:
+                        if not new_pwd:
+                            st.error("New password cannot be empty.")
+                        elif new_pwd != confirm_pwd:
+                            st.error("❌ Passwords do not match.")
+                        else:
+                            sbo_accounts[i]["password"] = new_pwd
+                            _save_cache(_SBO_ACC_CACHE, sbo_accounts)
+                            _gist_save_sbo(sbo_accounts)
+                            sbo_unlocked[i] = False
+                            st.session_state["sbo_acc_unlocked"] = sbo_unlocked
+                            st.success(f"✅ Password for {acc['label']} saved.")
+                            st.rerun()
+
+                    if cancel_btn:
+                        sbo_unlocked[i] = False
+                        st.session_state["sbo_acc_unlocked"] = sbo_unlocked
+                        st.rerun()
+
+        st.markdown("---")
+        st.subheader("🌐 Login & Screenshot")
+        st.caption("Log in to the SkipBinsOnline supplier portal with a saved account and take a screenshot.")
+
+        _sbo_acc_labels = [f"Account {i+1} ({sbo_accounts[i].get('username') or 'not set'})" for i in range(3)]
+        _sbo_sel_acc = st.selectbox("Select account to log in with", _sbo_acc_labels, key="sbo_login_acc_sel")
+        _sbo_sel_idx = int(_sbo_sel_acc.split()[1]) - 1
+
+        _sbo_login_delay = st.slider(
+            "⏱️ Page load delay after login (seconds)",
+            min_value=2, max_value=20, value=6, step=1,
+            key="sbo_login_delay",
+            help="Increase if the dashboard hasn't finished loading in the screenshot.",
+        )
+
+        sbo_login_btn = st.button("🔑 Login & Take Screenshot", type="primary", key="sbo_login_btn")
+
+        if sbo_login_btn:
+            _sbo_login_acc  = sbo_accounts[_sbo_sel_idx]
+            _sbo_login_user = _sbo_login_acc.get("username", "")
+            _sbo_login_pwd  = _sbo_login_acc.get("password", "")
+            if not _sbo_login_user or not _sbo_login_pwd:
+                st.error(f"❌ {_sbo_login_acc['label']} has no username or password set. Please fill them in above first.")
+            else:
+                with st.spinner(f"🔑 Logging in as {_sbo_login_acc['label']} ({_sbo_login_user})… waiting {_sbo_login_delay}s for page to load"):
+                    _ok, _msg, _shot = SBO.login(_sbo_login_user, _sbo_login_pwd, login_delay=_sbo_login_delay)
+                if _ok:
+                    st.success(f"✅ {_msg}")
+                else:
+                    st.error(f"❌ {_msg}")
+                if _shot:
+                    st.image(_shot, caption=f"Screenshot — {_sbo_login_acc['label']} ({_sbo_login_user})", width='stretch')
+
+    # -----------------------------------------------------------------------
+    # Sub-tab: Update Rates
+    # -----------------------------------------------------------------------
+    with sbo_tab_rates:
+        st.subheader("✏️ Update Rates — skipbinsonline.com.au")
+        st.caption("Log in once and update bin sizes in a single run.")
+        st.markdown("---")
+
+        _sbo_rate_acc_labels = [f"Account {i+1} ({sbo_accounts[i].get('username') or 'not set'})" for i in range(3)]
+        _sbo_rate_sel = st.selectbox("Account", _sbo_rate_acc_labels, key="sbo_rate_acc_sel")
+        _sbo_rate_idx = int(_sbo_rate_sel.split()[1]) - 1
+
+        _sbo_rate_waste = st.selectbox("Waste Type", list(SBO.WASTE_TYPE_RATES_URLS.keys()), key="sbo_rate_waste")
+
+        st.markdown("##### Enter new prices for bin sizes < 7.5 m³")
+        st.caption("Leave a field blank to skip that size. Sizes are updated in one login session.")
+
+        _sbo_lt75_sizes = ["1.5", "2", "2.5", "3", "3.5", "4", "5", "5.5", "6", "7"]
+        _sbo_price_inputs = {}
+        _sbo_size_cols = st.columns(5)
+        for _ci, sz in enumerate(_sbo_lt75_sizes):
+            with _sbo_size_cols[_ci % 5]:
+                _sbo_price_inputs[sz] = st.text_input(
+                    f"{sz} m³",
+                    value="",
+                    key=f"sbo_rate_price_{sz}",
+                    placeholder="e.g. 189",
+                )
+
+        _sbo_r1, _sbo_r2 = st.columns(2)
+        with _sbo_r1:
+            _sbo_rate_login_delay = st.slider(
+                "⏱️ Login delay (s)", min_value=2, max_value=20, value=6, step=1, key="sbo_rate_login_delay"
+            )
+        with _sbo_r2:
+            _sbo_rate_edit_delay = st.slider(
+                "⏱️ Per-row delay (s)", min_value=1, max_value=10, value=3, step=1, key="sbo_rate_edit_delay",
+                help="Wait time after navigating to each row's edit page before interacting."
+            )
+
+        _sbo_rate_btn = st.button("✏️ Update Sizes", type="primary", key="sbo_rate_btn")
+
+        if _sbo_rate_btn:
+            _sbo_racc  = sbo_accounts[_sbo_rate_idx]
+            _sbo_ruser = _sbo_racc.get("username", "")
+            _sbo_rpwd  = _sbo_racc.get("password", "")
+            if not _sbo_ruser or not _sbo_rpwd:
+                st.error(f"❌ {_sbo_racc['label']} has no username or password set. Fill them in the Sign In tab first.")
+            else:
+                _sbo_updates = [
+                    (sz, _sbo_price_inputs[sz].strip())
+                    for sz in _sbo_lt75_sizes
+                    if _sbo_price_inputs[sz].strip()
+                ]
+                if not _sbo_updates:
+                    st.warning("⚠️ Enter at least one price before updating.")
+                else:
+                    _sbo_summary_preview = "  |  ".join(
+                        f"{sz} m³ → ${_sbo_price_inputs[sz].strip()}"
+                        for sz in _sbo_lt75_sizes if _sbo_price_inputs[sz].strip()
+                    )
+                    with st.spinner(
+                        f"✏️ Logging in as {_sbo_racc['label']} and updating {len(_sbo_updates)} size(s): {_sbo_summary_preview}…"
+                    ):
+                        _sbo_rok, _sbo_rmsg = SBO.update_multiple_rates(
+                            _sbo_ruser, _sbo_rpwd,
+                            updates=_sbo_updates,
+                            rates_url=SBO.WASTE_TYPE_RATES_URLS[_sbo_rate_waste],
+                            login_delay=_sbo_rate_login_delay,
+                            edit_delay=_sbo_rate_edit_delay,
+                        )
+                    if _sbo_rok:
+                        st.success(f"✅ Done!  {_sbo_rmsg}")
+                    else:
+                        st.error(f"❌ {_sbo_rmsg}")
