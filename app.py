@@ -68,6 +68,7 @@ def _dod_to_min_date(d_slash: str) -> str:
 _CACHE_DIR     = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
 _BAB_CACHE     = os.path.join(_CACHE_DIR, "bab_results.json")
 _BPSB_CACHE    = os.path.join(_CACHE_DIR, "bpsb_results.json")
+_SBF_CACHE     = os.path.join(_CACHE_DIR, "sbf_results.json")
 
 _DEFAULT_ACCOUNTS = [
     {"label": "Account 1", "supplier_id": "", "password": "", "postcode": "3173"},
@@ -76,6 +77,12 @@ _DEFAULT_ACCOUNTS = [
 ]
 
 _DEFAULT_BPSB_ACCOUNTS = [
+    {"label": "Account 1", "username": "", "password": "", "postcode": "3173"},
+    {"label": "Account 2", "username": "", "password": "", "postcode": "3130"},
+    {"label": "Account 3", "username": "", "password": "", "postcode": "3199"},
+]
+
+_DEFAULT_SBF_ACCOUNTS = [
     {"label": "Account 1", "username": "", "password": "", "postcode": "3173"},
     {"label": "Account 2", "username": "", "password": "", "postcode": "3130"},
     {"label": "Account 3", "username": "", "password": "", "postcode": "3199"},
@@ -111,6 +118,7 @@ import requests as _requests
 
 _GIST_FILENAME      = "bab_accounts.json"
 _GIST_BPSB_FILENAME = "bpsb_accounts.json"
+_GIST_SBF_FILENAME  = "sbf_accounts.json"
 
 def _gist_token() -> Optional[str]:
     """Return GitHub token from st.secrets, or None if not configured."""
@@ -209,6 +217,46 @@ def _gist_save_bpsb(accounts: list) -> bool:
     except Exception:
         return False
 
+def _gist_load_sbf() -> Optional[list]:
+    """Fetch SBF account list from the Gist (sbf_accounts.json file)."""
+    token = _gist_token()
+    gid   = _gist_id()
+    if not token or not gid:
+        return None
+    try:
+        resp = _requests.get(
+            f"https://api.github.com/gists/{gid}",
+            headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        files = resp.json().get("files", {})
+        if _GIST_SBF_FILENAME not in files:
+            return None
+        content = files[_GIST_SBF_FILENAME]["content"]
+        data = json.loads(content)
+        return data if isinstance(data, list) else None
+    except Exception:
+        return None
+
+def _gist_save_sbf(accounts: list) -> bool:
+    """Write SBF account list to the Gist (sbf_accounts.json file)."""
+    token = _gist_token()
+    gid   = _gist_id()
+    if not token or not gid:
+        return False
+    try:
+        resp = _requests.patch(
+            f"https://api.github.com/gists/{gid}",
+            headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
+            json={"files": {_GIST_SBF_FILENAME: {"content": json.dumps(accounts, indent=2)}}},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        return True
+    except Exception:
+        return False
+
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -284,6 +332,33 @@ if "bpsb_accounts" not in st.session_state:
 
 if "bpsb_acc_unlocked" not in st.session_state:
     st.session_state["bpsb_acc_unlocked"] = [False, False, False]
+
+# SBF accounts
+if "sbf_accounts" not in st.session_state:
+    _sbf_acc = _gist_load_sbf()
+    if not isinstance(_sbf_acc, list):
+        _sbf_acc = _load_cache(os.path.join(_CACHE_DIR, "sbf_accounts.json"))
+    if not isinstance(_sbf_acc, list):
+        _sbf_acc = []
+    _sbf_acc = [a if isinstance(a, dict) else {} for a in _sbf_acc]
+    while len(_sbf_acc) < 3:
+        _sbf_acc.append({})
+    for _idx, _def in enumerate(_DEFAULT_SBF_ACCOUNTS):
+        for _k, _v in _def.items():
+            _sbf_acc[_idx].setdefault(_k, _v)
+    st.session_state["sbf_accounts"] = _sbf_acc[:3]
+
+if "sbf_acc_unlocked" not in st.session_state:
+    st.session_state["sbf_acc_unlocked"] = [False, False, False]
+
+# SBF results cache
+if "sbf_results" not in st.session_state:
+    _cached_sbf = _load_cache(_SBF_CACHE)
+    if _cached_sbf:
+        st.session_state["sbf_results"]    = _cached_sbf.get("results", {})
+        st.session_state["sbf_search_pc"]  = _cached_sbf.get("pc", "")
+        st.session_state["sbf_search_dod"] = _cached_sbf.get("dod", "")
+        st.session_state["sbf_search_pud"] = _cached_sbf.get("pud", "")
 
 def _go_home():
     st.session_state.page = "Home"
@@ -1290,14 +1365,289 @@ elif page == "BestPriceSkipBins":
                         st.image(_rshot, caption="Screenshot after all updates", width='stretch')
 
 # ===========================================================================
-# PAGE: SkipBinFinder Sign In
+# PAGE: SkipBinFinder
 # ===========================================================================
 
 elif page == "SkipBinFinder":
-    st.title("🔍 SkipBinFinder — Supplier Sign In")
-    st.markdown("Log in to your SkipBinFinder supplier account.")
+    st.title("🔍 SkipBinFinder")
     st.markdown("---")
-    st.info("Login automation for SkipBinFinder is not yet configured.")
+
+    sbf_tab_prices, sbf_tab_signin = st.tabs(["🔍 Check Price", "🔐 Sign In Information"])
+
+    # -----------------------------------------------------------------------
+    # Sub-tab: Check Price
+    # -----------------------------------------------------------------------
+    with sbf_tab_prices:
+        st.subheader("Check Prices — skipbinfinder.com.au")
+        st.caption("Search live prices from SkipBinFinder for your postcode and hire period.")
+
+        sbf_col1, sbf_col2, sbf_col3, sbf_col4 = st.columns([1, 1.4, 1.4, 1])
+        with sbf_col1:
+            sbf_postcode = st.text_input("Postcode", value="3173", key="sbf_pc")
+        with sbf_col2:
+            sbf_dod = st.text_input("Delivery Date (D/MM/YYYY)", value="1/04/2026", key="sbf_dod")
+        with sbf_col3:
+            sbf_pud = st.text_input("Pickup Date (D/MM/YYYY)", value="8/04/2026", key="sbf_pud")
+        with sbf_col4:
+            st.write("")
+            st.write("")
+            sbf_search = st.button("🔍 Search SkipBinFinder", width='stretch', type="primary", key="sbf_search")
+
+        if sbf_search:
+            if not sbf_postcode or not sbf_dod or not sbf_pud:
+                st.error("Please fill in all fields.")
+                st.stop()
+
+            def _run_sbf(run_fn, *args):
+                cell_q   = queue.Queue()
+                status_q = queue.Queue()
+                done     = threading.Event()
+                threading.Thread(target=run_fn, args=(*args, cell_q, status_q, done), daemon=True).start()
+                done.wait()
+                out = {}
+                while not cell_q.empty():
+                    wt, size, price = cell_q.get_nowait()
+                    out.setdefault(wt, {})[size] = price
+                return out
+
+            with st.spinner("🔍 Fetching prices from SkipBinFinder… (this may take a few minutes)"):
+                _fetched = _run_sbf(SBF.run_search, sbf_postcode, sbf_dod, sbf_pud)
+
+            if not _fetched:
+                st.warning("No data returned from SkipBinFinder. Check the postcode and dates, then try again.")
+                st.session_state.pop("sbf_results", None)
+            else:
+                st.session_state["sbf_results"]    = _fetched
+                st.session_state["sbf_search_pc"]  = sbf_postcode
+                st.session_state["sbf_search_dod"] = sbf_dod
+                st.session_state["sbf_search_pud"] = sbf_pud
+                _save_cache(_SBF_CACHE, {
+                    "results": _fetched,
+                    "pc":      sbf_postcode,
+                    "dod":     sbf_dod,
+                    "pud":     sbf_pud,
+                })
+
+        # ── Render from session_state (persists across tab switches) ──
+        if "sbf_results" in st.session_state:
+            sbf_results  = st.session_state["sbf_results"]
+            saved_pc  = st.session_state.get("sbf_search_pc", "")
+            saved_dod = st.session_state.get("sbf_search_dod", "")
+            saved_pud = st.session_state.get("sbf_search_pud", "")
+
+            st.success(
+                f"✅ Done — Postcode **{saved_pc}**  |  {saved_dod} → {saved_pud}  |  SkipBinFinder prices loaded."
+            )
+
+            # --- Cheapest price highlight ---
+            st.subheader("💰 Cheapest Available Price")
+            cheapest_price = None
+            cheapest_wt    = None
+            cheapest_size  = None
+            for wt, sizes in sbf_results.items():
+                for sz, pr in sizes.items():
+                    if isinstance(pr, (int, float)):
+                        if cheapest_price is None or pr < cheapest_price:
+                            cheapest_price = pr
+                            cheapest_wt    = wt
+                            cheapest_size  = sz
+
+            if cheapest_price is not None:
+                ch_col1, ch_col2, ch_col3 = st.columns(3)
+                ch_col1.metric("Waste Type", cheapest_wt)
+                ch_col2.metric("Bin Size",   f"{cheapest_size} m³")
+                ch_col3.metric("Best Price", f"${cheapest_price:,.0f}")
+            else:
+                st.info("No priced results found for this postcode / date range.")
+
+            st.markdown("---")
+
+            # --- Full data tables ---
+            st.subheader("📋 All Available Sizes")
+            st.dataframe(
+                _to_df(sbf_results, SBF.WASTE_TYPES, SBF.ALL_SIZES),
+                width='stretch',
+            )
+
+            st.markdown("---")
+
+            # ---------------------------------------------------------------
+            # Update Price section
+            # ---------------------------------------------------------------
+            st.subheader("💲 Update Price")
+            st.caption(
+                "Rule: **General Waste & Green Garden Waste** → price − 1 for ≤ 12 m³ and 15, 16, 20, 30 m³  |  "
+                "all other waste types → price unchanged"
+            )
+
+            _SBF_MINUS1_WTS = {'General Waste', 'Green Garden Waste'}
+            _SBF_EXTRA_SZFS = {15.0, 16.0, 20.0, 30.0}
+
+            _sbf_price_map = {}
+            for _wt, _sizes in sbf_results.items():
+                for _sz, _pr in _sizes.items():
+                    if isinstance(_pr, (int, float)):
+                        try:
+                            _sz_f = float(_sz)
+                        except (ValueError, TypeError):
+                            _sz_f = 0.0
+                        if _wt in _SBF_MINUS1_WTS and (_sz_f <= 12.0 or _sz_f in _SBF_EXTRA_SZFS):
+                            _adj = int(_pr) - 1
+                        else:
+                            _adj = int(_pr)
+                        _key = (_wt, _sz)
+                        if _key not in _sbf_price_map or _adj < _sbf_price_map[_key]:
+                            _sbf_price_map[_key] = _adj
+
+            if _sbf_price_map:
+                _sbf_update_wts = [wt for wt in SBF.WASTE_TYPES if any(k[0] == wt for k in _sbf_price_map)]
+                _sbf_update_szs = [sz for sz in SBF.ALL_SIZES if any(k[1] == sz for k in _sbf_price_map)]
+                _sbf_preview_rows = []
+                for _wt in _sbf_update_wts:
+                    _row = {"Waste Type": _wt}
+                    for _sz in _sbf_update_szs:
+                        _val = _sbf_price_map.get((_wt, _sz))
+                        _row[f"{_sz} m³"] = f"${_val:,.0f}" if _val is not None else "N/A"
+                    _sbf_preview_rows.append(_row)
+                _df_sbf_preview = pd.DataFrame(_sbf_preview_rows).set_index("Waste Type")
+                st.dataframe(_df_sbf_preview, width='stretch')
+
+                _sbf_copy_col, _sbf_dl_col = st.columns([1, 1])
+                with _sbf_copy_col:
+                    _sbf_csv_text = _df_sbf_preview.to_csv(index=True)
+                    st.download_button(
+                        "📋 Download as CSV",
+                        data=_sbf_csv_text,
+                        file_name="sbf_update_price.csv",
+                        mime="text/csv",
+                        width='stretch',
+                        key="sbf_dl_csv",
+                    )
+                with _sbf_dl_col:
+                    import json as _json2
+                    _sbf_json_data = {}
+                    for _wt2 in _sbf_update_wts:
+                        _sbf_json_data[_wt2] = {}
+                        for _sz2 in _sbf_update_szs:
+                            _val2 = _sbf_price_map.get((_wt2, _sz2))
+                            if _val2 is not None:
+                                _sbf_json_data[_wt2][_sz2] = _val2
+                    _sbf_json_text = _json2.dumps(_sbf_json_data, indent=2)
+                    _sbf_copy_js = f"""
+                    <textarea id="_sbf_cp_buf" style="position:absolute;left:-9999px">{_sbf_json_text}</textarea>
+                    <button onclick="var t=document.getElementById('_sbf_cp_buf');t.select();document.execCommand('copy');this.innerText='✅ Copied!';"
+                        style="width:100%;padding:0.4rem 0.8rem;background:#ff4b4b;color:white;border:none;border-radius:4px;cursor:pointer;font-size:0.9rem;">
+                        📋 Copy as JSON
+                    </button>"""
+                    st.components.v1.html(_sbf_copy_js, height=42)
+            else:
+                st.info("Run a search first to populate the price map.")
+
+    # -----------------------------------------------------------------------
+    # Sub-tab: Sign In Information  (3 saved accounts, passwords locked)
+    # -----------------------------------------------------------------------
+    with sbf_tab_signin:
+        st.subheader("🔐 Sign In Information — skipbinfinder.com.au")
+        st.caption("Saved credentials for up to 3 SkipBinFinder supplier accounts. Passwords are hidden and protected.")
+        st.markdown("---")
+
+        sbf_accounts = st.session_state["sbf_accounts"]
+        sbf_unlocked = st.session_state["sbf_acc_unlocked"]
+        _SBF_ACC_CACHE = os.path.join(_CACHE_DIR, "sbf_accounts.json")
+
+        for i in range(3):
+            acc = sbf_accounts[i]
+            with st.expander(
+                f"**{acc['label']}**  —  Postcode: `{acc.get('postcode') or '(not set)'}`  |  Username: `{acc.get('username') or '(not set)'}`",
+                expanded=True,
+            ):
+                v1, v2, v3 = st.columns([1, 1, 1])
+                with v1:
+                    new_pc = st.text_input(
+                        "Postcode",
+                        value=acc.get("postcode", ""),
+                        key=f"sbf_postcode_{i}",
+                    )
+                with v2:
+                    new_user = st.text_input(
+                        "Username",
+                        value=acc.get("username", ""),
+                        key=f"sbf_user_{i}",
+                    )
+                with v3:
+                    masked = "••••••••" if acc.get("password") else "(not set)"
+                    st.text_input(
+                        "Password",
+                        value=masked,
+                        disabled=True,
+                        key=f"sbf_pwd_display_{i}",
+                    )
+
+                _changed = False
+                if new_pc != acc.get("postcode", ""):
+                    sbf_accounts[i]["postcode"] = new_pc
+                    _changed = True
+                if new_user != acc.get("username", ""):
+                    sbf_accounts[i]["username"] = new_user
+                    _changed = True
+                if _changed:
+                    _save_cache(_SBF_ACC_CACHE, sbf_accounts)
+                    _gist_save_sbf(sbf_accounts)
+                    st.rerun()
+
+                if not sbf_unlocked[i]:
+                    st.markdown("🔒 **Password is locked.** Enter the current password to unlock and change it.")
+                    ul1, ul2 = st.columns([2, 1])
+                    with ul1:
+                        entered = st.text_input(
+                            "Enter current password to unlock",
+                            type="password",
+                            key=f"sbf_unlock_{i}",
+                        )
+                    with ul2:
+                        st.write("")
+                        st.write("")
+                        unlock_btn = st.button("🔓 Unlock", key=f"sbf_unlock_btn_{i}")
+
+                    if unlock_btn:
+                        if not acc.get("password") or entered == acc["password"]:
+                            sbf_unlocked[i] = True
+                            st.session_state["sbf_acc_unlocked"] = sbf_unlocked
+                            st.rerun()
+                        else:
+                            st.error("❌ Incorrect password.")
+                else:
+                    st.markdown("🔓 **Unlocked.** Set a new password below.")
+                    e1, e2, e3 = st.columns([2, 2, 1])
+                    with e1:
+                        new_pwd = st.text_input("New Password", type="password", key=f"sbf_newpwd_{i}")
+                    with e2:
+                        confirm_pwd = st.text_input("Confirm Password", type="password", key=f"sbf_confirmpwd_{i}")
+                    with e3:
+                        st.write("")
+                        st.write("")
+                        save_btn = st.button("💾 Save", key=f"sbf_savepwd_{i}", type="primary")
+
+                    cancel_btn = st.button("🔒 Cancel & Lock", key=f"sbf_cancel_{i}")
+
+                    if save_btn:
+                        if not new_pwd:
+                            st.error("New password cannot be empty.")
+                        elif new_pwd != confirm_pwd:
+                            st.error("❌ Passwords do not match.")
+                        else:
+                            sbf_accounts[i]["password"] = new_pwd
+                            _save_cache(_SBF_ACC_CACHE, sbf_accounts)
+                            _gist_save_sbf(sbf_accounts)
+                            sbf_unlocked[i] = False
+                            st.session_state["sbf_acc_unlocked"] = sbf_unlocked
+                            st.success(f"✅ Password for {acc['label']} saved.")
+                            st.rerun()
+
+                    if cancel_btn:
+                        sbf_unlocked[i] = False
+                        st.session_state["sbf_acc_unlocked"] = sbf_unlocked
+                        st.rerun()
 
 # ===========================================================================
 # PAGE: SkipBinsOnline Sign In
