@@ -417,14 +417,12 @@ def login(username: str, password: str, login_delay: float = 5.0):
 def _update_single_row(driver, size: str, new_price: str, rates_url: str, edit_delay: float,
                        start_date: str = None):
     """
-    Session is already established (Marrel + waste-type clicked in caller).
-    Navigate to edit URL, fill price inputs, click save.
+    Navigate to edit URL and use JavaScript to fill price inputs and submit.
+    The edit page shows the same table with the target row's cells as inputs.
     Returns (success: bool, message: str, screenshot: bytes|None).
-    All exceptions are caught internally so the caller loop never crashes.
+    All exceptions caught internally.
     """
     import time
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.common.keys import Keys
 
     diag_shot = None
 
@@ -444,108 +442,113 @@ def _update_single_row(driver, size: str, new_price: str, rates_url: str, edit_d
         time.sleep(edit_delay)
         _snap()   # screenshot of edit form
 
-        # Broad selector: all visible inputs except navigation/hidden/checkbox types
-        EDITABLE_CSS = (
-            "input:not([type='hidden']):not([type='submit']):not([type='button'])"
-            ":not([type='image']):not([type='reset']):not([type='checkbox']):not([type='radio']), "
-            "textarea"
-        )
+        # --- Step A: inventory all visible non-nav inputs via JS ---------
+        inventory = driver.execute_script("""
+            var SKIP = {hidden:1, submit:1, button:1, image:1,
+                        checkbox:1, radio:1, reset:1};
+            return Array.from(document.querySelectorAll('input, textarea'))
+              .filter(function(el) {
+                var t = (el.type || 'text').toLowerCase();
+                if (SKIP[t]) return false;
+                var r = el.getBoundingClientRect();
+                return r.width > 0 && r.height > 0;
+              })
+              .map(function(el, i) {
+                return {idx:i, type:el.type||'text', name:el.name||'',
+                        value:el.value, ro:el.readOnly, dis:el.disabled};
+              });
+        """) or []
 
-        def _get_editable(ctx):
-            return [e for e in ctx.find_elements(By.CSS_SELECTOR, EDITABLE_CSS)
-                    if e.is_displayed() and e.is_enabled()]
-
-        # Wait up to 8 s in main frame
-        editable = []
-        for _ in range(8):
-            editable = _get_editable(driver)
-            if editable:
-                break
-            time.sleep(1)
-
-        # Fall back to iframes
-        if not editable:
-            for frame in driver.find_elements(By.TAG_NAME, "iframe"):
-                try:
-                    driver.switch_to.frame(frame)
-                    for _ in range(4):
-                        editable = _get_editable(driver)
-                        if editable:
-                            break
-                        time.sleep(1)
-                    if editable:
-                        break
-                    driver.switch_to.default_content()
-                except Exception:
-                    driver.switch_to.default_content()
-
-        if not editable:
-            driver.switch_to.default_content()
+        if not inventory:
             try:
-                src_excerpt = driver.page_source[:3000]
+                src = driver.page_source[:3000]
             except Exception:
-                src_excerpt = "(unavailable)"
+                src = "(unavailable)"
             return False, (
-                f"{size} m³: no editable inputs on edit form. "
+                f"{size} m³: 0 inputs found on edit page. "
                 f"URL={driver.current_url} | "
-                f"HTML[:3000]={src_excerpt}"
+                f"HTML[:3000]={src}"
             ), diag_shot
 
-        # Fill all visible price inputs using JS (bypasses readonly) + send_keys for events
-        last_el = None
-        for el in editable:
-            try:
-                driver.execute_script(
-                    "arguments[0].removeAttribute('readonly'); arguments[0].value = '';",
-                    el)
-                el.click()
-                el.send_keys(Keys.CONTROL + "a")
-                el.send_keys(new_price)
-                last_el = el
-            except Exception:
-                pass
+        # --- Step B: fill price-looking inputs via JS --------------------
+        # Price inputs have a decimal value (e.g. "220.0") or numeric > 50.
+        # Slot/quantity inputs tend to be small integers (≤ 50).
+        # Fill ALL inputs whose current value looks like a price.
+        filled = driver.execute_script("""
+            var price = arguments[0];
+            var SKIP = {hidden:1, submit:1, button:1, image:1,
+                        checkbox:1, radio:1, reset:1};
+            var filled = [];
+            Array.from(document.querySelectorAll('input, textarea'))
+              .filter(function(el) {
+                var t = (el.type || 'text').toLowerCase();
+                if (SKIP[t]) return false;
+                var r = el.getBoundingClientRect();
+                return r.width > 0 && r.height > 0;
+              })
+              .forEach(function(el) {
+                var v = parseFloat(el.value);
+                // fill if current value looks like a price (has decimal OR > 50)
+                var isPrice = (el.value.indexOf('.') !== -1) || (v > 50);
+                if (!isPrice) return;
+                el.removeAttribute('readonly');
+                el.disabled = false;
+                el.value = price;
+                el.dispatchEvent(new Event('input',  {bubbles:true}));
+                el.dispatchEvent(new Event('change', {bubbles:true}));
+                filled.push(el.name + '(' + v + ')');
+              });
+            return filled;
+        """, str(new_price)) or []
 
-        # Find save button: prefer image/submit, skip obvious nav buttons
-        def _find_save_btn(ctx):
-            _NAV = ("supplier", "account", "service", "waste schedule",
-                    "report", "logout", "stock")
-            for by, sel in [
-                (By.CSS_SELECTOR, "input[type='image']"),
-                (By.CSS_SELECTOR, "input[type='submit']"),
-                (By.XPATH, "//button[@type='submit']"),
-                (By.XPATH, "//button"),
-                (By.CSS_SELECTOR, "input[type='button']"),
-            ]:
-                for el in ctx.find_elements(by, sel):
-                    if not el.is_displayed():
-                        continue
-                    v = (el.get_attribute("value") or
-                         el.get_attribute("alt") or
-                         el.text or "").lower()
-                    if any(w in v for w in _NAV):
-                        continue
-                    return el
-            return None
+        if not filled:
+            inv_str = "; ".join(
+                f"{d['name']}={d['value']}(ro={d['ro']},dis={d['dis']})"
+                for d in inventory[:10]
+            )
+            return False, (
+                f"{size} m³: found {len(inventory)} inputs but none look like a price. "
+                f"inventory={inv_str}"
+            ), diag_shot
 
-        save_btn = _find_save_btn(driver)
-        if save_btn is not None:
-            driver.execute_script("arguments[0].click();", save_btn)
-            time.sleep(2)
-            driver.switch_to.default_content()
-            return True, f"{size} m³ → ${new_price} ✓", diag_shot
+        # --- Step C: submit form via JS ----------------------------------
+        submit_result = driver.execute_script("""
+            var SKIP = {hidden:1, submit:1, button:1, image:1,
+                        checkbox:1, radio:1, reset:1};
+            // Try clicking a visible submit/image button first
+            var btns = Array.from(document.querySelectorAll(
+                'input[type="submit"], input[type="image"], button[type="submit"], button'));
+            for (var i = 0; i < btns.length; i++) {
+                var b = btns[i];
+                var v = (b.value || b.textContent || b.alt || '').toLowerCase();
+                var r = b.getBoundingClientRect();
+                if (r.width > 0 && r.height > 0) {
+                    b.click();
+                    return 'btn-click:' + (b.value || b.textContent || '').trim().slice(0,30);
+                }
+            }
+            // Fall back: submit the form containing the first price input
+            var el = Array.from(document.querySelectorAll('input, textarea'))
+              .filter(function(el) {
+                var t = (el.type || 'text').toLowerCase();
+                if (SKIP[t]) return false;
+                var r = el.getBoundingClientRect();
+                return r.width > 0 && r.height > 0;
+              })[0];
+            if (el && el.form) { el.form.submit(); return 'form.submit'; }
+            return 'no-submit';
+        """)
 
-        # Last resort: submit the form containing the price input
-        if last_el is not None:
-            try:
-                driver.execute_script("arguments[0].form.submit();", last_el)
-                time.sleep(2)
-                driver.switch_to.default_content()
-                return True, f"{size} m³ → ${new_price} ✓ (form.submit)", diag_shot
-            except Exception as fe:
-                pass
-
+        time.sleep(2)
         driver.switch_to.default_content()
-        return False, f"{size} m³: price inputs filled but no save button found.", diag_shot
+
+        inv_summary = "; ".join(
+            f"{d['name']}={d['value']}" for d in inventory[:5]
+        )
+        return True, (
+            f"{size} m³ → ${new_price} ✓ "
+            f"[inputs_found={len(inventory)}, filled={filled}, submit={submit_result}]"
+        ), diag_shot
 
     except Exception as exc:
         _snap()
