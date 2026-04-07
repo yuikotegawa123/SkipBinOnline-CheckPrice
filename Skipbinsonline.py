@@ -538,9 +538,11 @@ def update_multiple_rates(username: str, password: str,
                 pass
             return False, msg, screenshot
 
-        # Navigate to rates page and screenshot to verify login
+        # Navigate to the price-table view (&save=true) — required to load the
+        # price-editing interface; without it only the availability grid is shown.
         date_part = f"&startDate={start_date}" if start_date else ""
-        driver.get(rates_url + date_part)
+        save_url = rates_url + date_part + "&save=true"
+        driver.get(save_url)
         time.sleep(3)
         try:
             screenshot = driver.get_screenshot_as_png()
