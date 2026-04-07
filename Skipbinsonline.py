@@ -284,19 +284,20 @@ def run_search(postcode: str, dod: str, pud: str,
 # Supplier rates management URLs per waste type
 # ---------------------------------------------------------------------------
 
+# Rates management uses a single page with cat_id query param (same cat_ids as the booking API)
 WASTE_TYPE_RATES_URLS = {
-    "General Waste":        "https://order.skipbinsonline.com.au/supplier/rates_manage.php",
-    "Household":            "https://order.skipbinsonline.com.au/supplier/rates_manage_household.php",
-    "Mixed Heavy Waste":    "https://order.skipbinsonline.com.au/supplier/rates_manage_mixedheavy.php",
-    "Mixed Waste w/ Soil":  "https://order.skipbinsonline.com.au/supplier/rates_manage_mixedwithsoil.php",
-    "Light Building Waste": "https://order.skipbinsonline.com.au/supplier/rates_manage_lightbuilding.php",
-    "Excavation Waste":     "https://order.skipbinsonline.com.au/supplier/rates_manage_excavation.php",
-    "Mixed Rubble":         "https://order.skipbinsonline.com.au/supplier/rates_manage_rubble.php",
-    "Clean Waste":          "https://order.skipbinsonline.com.au/supplier/rates_manage_clean.php",
-    "Green Waste":          "https://order.skipbinsonline.com.au/supplier/rates_manage_green.php",
+    "General Waste":        "https://order.skipbinsonline.com.au/order/supplier/waste_schedules.php?cat_id=10",
+    "Household":            "https://order.skipbinsonline.com.au/order/supplier/waste_schedules.php?cat_id=14",
+    "Mixed Heavy Waste":    "https://order.skipbinsonline.com.au/order/supplier/waste_schedules.php?cat_id=12",
+    "Mixed Waste w/ Soil":  "https://order.skipbinsonline.com.au/order/supplier/waste_schedules.php?cat_id=23",
+    "Light Building Waste": "https://order.skipbinsonline.com.au/order/supplier/waste_schedules.php?cat_id=22",
+    "Excavation Waste":     "https://order.skipbinsonline.com.au/order/supplier/waste_schedules.php?cat_id=16",
+    "Mixed Rubble":         "https://order.skipbinsonline.com.au/order/supplier/waste_schedules.php?cat_id=15",
+    "Clean Waste":          "https://order.skipbinsonline.com.au/order/supplier/waste_schedules.php?cat_id=13",
+    "Green Waste":          "https://order.skipbinsonline.com.au/order/supplier/waste_schedules.php?cat_id=11",
 }
 
-_SUPPLIER_LOGIN_URL = "https://order.skipbinsonline.com.au/supplier/"
+_SUPPLIER_LOGIN_URL = "https://order.skipbinsonline.com.au/order/supplier/login.php"
 
 
 # ---------------------------------------------------------------------------
