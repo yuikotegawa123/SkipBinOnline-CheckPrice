@@ -417,35 +417,62 @@ def login(username: str, password: str, login_delay: float = 5.0):
 def _update_single_row(driver, size: str, new_price: str, rates_url: str, edit_delay: float,
                        start_date: str = None):
     """
-    From the already-loaded price-table (save=true) page:
-      1. Navigate to the edit URL for this size  (?edit=SIZE&startDate=...)
-      2. Take a diagnostic screenshot (returned in tuple for caller)
-      3. Find price inputs (textarea / text / number) in main frame then iframes
-      4. Clear and type the new price
-      5. Click the save/submit button
+    1. Navigate to save=true page (price table with edit links).
+    2. Find and click the edit link for this size (href contains 'edit={size}').
+    3. Screenshot the resulting edit form.
+    4. Find price inputs (textarea/text/number) in main frame then iframes.
+    5. Clear and type the new price.
+    6. Click the save/submit button.
     Returns (success: bool, message: str, screenshot: bytes|None).
     """
     import time
     from selenium.webdriver.common.by import By
-    from selenium.webdriver.common.keys import Keys
 
     date_part = f"&startDate={start_date}" if start_date else ""
-    edit_url = f"{rates_url}&edit={size}{date_part}"
+    save_url = f"{rates_url}{date_part}&save=true"
+
     driver.switch_to.default_content()
-    driver.get(edit_url)
+    driver.get(save_url)
     time.sleep(edit_delay)
 
-    # Screenshot the edit page so we can debug if it fails
+    # Find the edit link for this size on the price table
+    # Try both "1.5" and "1.5m3" and strip trailing ".0" variant
+    size_variants = [size]
+    if size.endswith(".0"):
+        size_variants.append(size[:-2])          # "2.0" → "2"
+    elif "." not in size:
+        size_variants.append(size + ".0")         # "2"   → "2.0"
+
+    edit_link = None
+    for s in size_variants:
+        candidates = driver.find_elements(
+            By.XPATH, f"//a[contains(@href, 'edit={s}')]")
+        if candidates:
+            edit_link = candidates[0]
+            break
+
+    if edit_link is None:
+        diag_shot = None
+        try:
+            diag_shot = driver.get_screenshot_as_png()
+        except Exception:
+            pass
+        return False, (
+            f"{size} m³: edit link not found on price table page. "
+            f"URL={driver.current_url} | title={driver.title!r}"
+        ), diag_shot
+
+    driver.execute_script("arguments[0].click();", edit_link)
+    time.sleep(edit_delay)
+
+    # Screenshot the edit form
     diag_shot = None
     try:
         diag_shot = driver.get_screenshot_as_png()
     except Exception:
         pass
 
-    EDITABLE_CSS = (
-        "textarea, "
-        "input[type='text'], input[type='number']"
-    )
+    EDITABLE_CSS = "textarea, input[type='text'], input[type='number']"
 
     def _get_editable(ctx):
         els = ctx.find_elements(By.CSS_SELECTOR, EDITABLE_CSS)
@@ -463,7 +490,6 @@ def _update_single_row(driver, size: str, new_price: str, rates_url: str, edit_d
         ]:
             for el in ctx.find_elements(by, sel):
                 v = (el.get_attribute("value") or el.text or "").lower()
-                # skip navigation buttons
                 if any(w in v for w in ("supplier", "account", "service", "waste schedule",
                                         "report", "logout", "stock", "marrel", "household",
                                         "general", "excavation", "rubble", "clean", "green",
@@ -501,9 +527,8 @@ def _update_single_row(driver, size: str, new_price: str, rates_url: str, edit_d
     if not editable:
         driver.switch_to.default_content()
         return False, (
-            f"{size} m³: no editable inputs found on edit form. "
-            f"URL={driver.current_url} | "
-            f"page title={driver.title!r}"
+            f"{size} m³: no editable inputs on edit form. "
+            f"URL={driver.current_url} | title={driver.title!r}"
         ), diag_shot
 
     # Fill every visible price input
