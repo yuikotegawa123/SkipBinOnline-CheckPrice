@@ -157,26 +157,54 @@ def _parse_step4_prices(driver):
     """
     Parse the step-4 bin-size listing and return a dict: {size_str -> min_price}.
     Handles duplicate size entries (e.g. two 3m³ bins from different suppliers)
-    by keeping the lowest price.
+    by keeping the lowest price.  Skips Trailer Bin entries entirely.
     """
     from selenium.webdriver.common.by import By
     body_text = driver.find_element(By.TAG_NAME, "body").text
 
-    # Each bin entry looks like (across multiple lines):
-    #   "X cubic meters\nBest Price\n$YYY\n..."
-    # or with "Trailer Bin" label inserted before the size
+    # Parse line-by-line so we can detect the "Trailer Bin" label that appears
+    # on the line immediately before (or within a few lines of) the size line.
     prices = {}
-    pattern = re.compile(
-        r'(\d+(?:\.\d+)?)\s+cubic\s+met(?:er|re)s?\s+'
-        r'Best Price\s+\$([0-9,]+(?:\.\d+)?)',
-        re.IGNORECASE
-    )
-    for m in pattern.finditer(body_text):
-        size  = m.group(1)
-        price = float(m.group(2).replace(",", ""))
-        # Keep minimum price when a size appears more than once
-        if size not in prices or price < prices[size]:
-            prices[size] = price
+    lines  = [l.strip() for l in body_text.split('\n')]
+    size_re  = re.compile(r'^(\d+(?:\.\d+)?)\s+cubic\s+met(?:er|re)s?$', re.IGNORECASE)
+    price_re = re.compile(r'^Best\s+Price$', re.IGNORECASE)
+    dollar_re = re.compile(r'^\$([0-9,]+(?:\.\d+)?)$')
+
+    for i, line in enumerate(lines):
+        m = size_re.match(line)
+        if not m:
+            continue
+        size = m.group(1)
+
+        # Check the 3 lines preceding this size line for "Trailer Bin"
+        preceding = lines[max(0, i - 3): i]
+        if any(re.search(r'trailer\s*bin', p, re.IGNORECASE) for p in preceding):
+            continue
+
+        # Scan forward for "Best Price" then "$XXX"
+        best_price = None
+        for j in range(i + 1, min(i + 15, len(lines))):
+            if price_re.match(lines[j]):
+                # price on same line ("Best Price $XXX") or next line
+                inline = re.search(r'\$([0-9,]+(?:\.\d+)?)', lines[j])
+                if inline:
+                    best_price = float(inline.group(1).replace(',', ''))
+                elif j + 1 < len(lines):
+                    dm = dollar_re.match(lines[j + 1])
+                    if dm:
+                        best_price = float(dm.group(1).replace(',', ''))
+                break
+            # also handles "Best Price $XXX" on a single line
+            combined = re.match(
+                r'Best\s+Price\s+\$([0-9,]+(?:\.\d+)?)', lines[j], re.IGNORECASE
+            )
+            if combined:
+                best_price = float(combined.group(1).replace(',', ''))
+                break
+
+        if best_price is not None:
+            if size not in prices or best_price < prices[size]:
+                prices[size] = best_price
 
     return prices
 
