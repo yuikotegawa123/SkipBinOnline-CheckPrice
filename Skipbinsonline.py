@@ -518,21 +518,32 @@ def update_multiple_rates(username: str, password: str,
                           start_date: str = None):
     """
     Log in ONCE then update multiple rows sequentially.
-    updates   : list of (size_str, new_price_str) e.g. [("2", "189"), ("3", "308")].
-    rates_url : URL of the rates management page; defaults to General Waste URL.
-    start_date: optional YY-MM-DD string for the &startDate= query param.
-    Row IDs are auto-detected from the rates page — no hardcoding needed.
-    Returns (success, message).
+    Returns (success, message, screenshot_bytes_or_None).
     """
+    import time
     if rates_url is None:
         rates_url = WASTE_TYPE_RATES_URLS.get("General Waste", _SUPPLIER_LOGIN_URL)
 
     driver = _make_screenshot_driver()
     results = []
+    screenshot = None
     try:
         ok, msg = _do_login(driver, username, password, login_delay)
         if not ok:
-            return False, msg
+            try:
+                screenshot = driver.get_screenshot_as_png()
+            except Exception:
+                pass
+            return False, msg, screenshot
+
+        # Navigate to rates page and screenshot to verify login
+        date_part = f"&startDate={start_date}" if start_date else ""
+        driver.get(rates_url + date_part)
+        time.sleep(3)
+        try:
+            screenshot = driver.get_screenshot_as_png()
+        except Exception:
+            pass
 
         for size_str, new_price in updates:
             ok, msg = _update_single_row(driver, size_str, new_price, rates_url, edit_delay,
@@ -540,15 +551,19 @@ def update_multiple_rates(username: str, password: str,
             if ok:
                 results.append(msg)
             else:
-                results.append(f"{size_str} m\u00b3: \u274c {msg}")
+                results.append(f"{size_str} m³: ❌ {msg}")
 
         all_ok = all("❌" not in r for r in results)
         summary = "  |  ".join(results)
-        return all_ok, summary
+        return all_ok, summary, screenshot
 
     except Exception as exc:
         summary = ("  |  ".join(results) + f"  |  ERROR: {exc}").lstrip("  |  ")
-        return False, summary
+        try:
+            screenshot = driver.get_screenshot_as_png()
+        except Exception:
+            pass
+        return False, summary, screenshot
     finally:
         try:
             driver.quit()
@@ -564,14 +579,11 @@ def update_waste_type_rates(username: str, password: str,
                             start_date: str = None):
     """
     Log in and update prices for a specific waste type.
-    waste_type : key in WASTE_TYPE_RATES_URLS
-    updates    : list of (size_str, new_price_str)
-    start_date : optional YY-MM-DD string for the &startDate= query param.
-    Returns (success, message).
+    Returns (success, message, screenshot_bytes_or_None).
     """
     rates_url = WASTE_TYPE_RATES_URLS.get(waste_type)
     if not rates_url:
-        return False, f"No rates URL configured for waste type: {waste_type}"
+        return False, f"No rates URL configured for waste type: {waste_type}", None
 
     return update_multiple_rates(
         username, password,

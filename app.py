@@ -1954,6 +1954,10 @@ elif page == "SkipBinsOnline":
                         st.success("**Done:**\n" + "\n".join(f"- {r['msg']}" for r in _ok_items))
                     if _err_items:
                         st.error("**Failed:**\n" + "\n".join(f"- {r['msg']}" for r in _err_items))
+                    # Show screenshots from any run result
+                    for _rr in _sbo_last_run:
+                        if _rr.get("screenshot"):
+                            st.image(_rr["screenshot"], caption=f"Screenshot — {_rr['msg'][:60]}", width='stretch')
                     if st.button("✖ Clear results", key="sbo_clear_results"):
                         st.session_state["sbo_last_run_summary"] = []
                         st.rerun()
@@ -1971,13 +1975,13 @@ elif page == "SkipBinsOnline":
                         st.session_state[f"sbo_wt_result_{idx}"] = result
                         st.session_state.setdefault("sbo_last_run_summary", []).append(result)
                         return
-                    ok, msg = SBO.update_waste_type_rates(
+                    ok, msg, shot = SBO.update_waste_type_rates(
                         _sbo_edit_acc["username"], _sbo_edit_acc["password"],
                         waste_type=wt, updates=wt_updates,
                         login_delay=6, edit_delay=3,
                         start_date=_dod_to_sbo_date(saved_dod) or None,
                     )
-                    result = {"ok": ok, "msg": f"{wt} — {msg}"}
+                    result = {"ok": ok, "msg": f"{wt} — {msg}", "screenshot": shot}
                     st.session_state[f"sbo_wt_result_{idx}"] = result
                     st.session_state.setdefault("sbo_last_run_summary", []).append(result)
 
@@ -2224,7 +2228,7 @@ elif page == "SkipBinsOnline":
                     with st.spinner(
                         f"✏️ Logging in as {_sbo_racc['label']} and updating {len(_sbo_updates)} size(s): {_sbo_summary_preview}…"
                     ):
-                        _sbo_rok, _sbo_rmsg = SBO.update_multiple_rates(
+                        _sbo_rok, _sbo_rmsg, _sbo_rshot = SBO.update_multiple_rates(
                             _sbo_ruser, _sbo_rpwd,
                             updates=_sbo_updates,
                             rates_url=SBO.WASTE_TYPE_RATES_URLS[_sbo_rate_waste],
@@ -2236,3 +2240,5 @@ elif page == "SkipBinsOnline":
                         st.success(f"✅ Done!  {_sbo_rmsg}")
                     else:
                         st.error(f"❌ {_sbo_rmsg}")
+                    if _sbo_rshot:
+                        st.image(_sbo_rshot, caption="Screenshot after login (rates page)", width='stretch')
