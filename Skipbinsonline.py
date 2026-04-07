@@ -412,16 +412,18 @@ def login(username: str, password: str, login_delay: float = 5.0):
 # Supplier rate price updater  (Selenium)
 # ---------------------------------------------------------------------------
 
-def _get_row_id_map(driver, rates_url: str) -> dict:
+def _get_row_id_map(driver, rates_url: str, start_date: str = None) -> dict:
     """
     Load the rates page and return a dict mapping bin size string to row id string.
     e.g. {"2": "1", "3": "2", "5": "7", ...}
     Row IDs are read from the edit pencil links (?action=edit&id=N).
+    start_date: optional YY-MM-DD string appended as &startDate= query param.
     """
     import re
     import time
 
-    driver.get(rates_url)
+    nav_url = rates_url + (f"&startDate={start_date}" if start_date else "")
+    driver.get(nav_url)
     time.sleep(3)
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
@@ -472,17 +474,20 @@ def _get_row_id_map(driver, rates_url: str) -> dict:
     return id_map
 
 
-def _update_single_row(driver, row_id: str, new_price: str, rates_url: str, edit_delay: float):
+def _update_single_row(driver, row_id: str, new_price: str, rates_url: str, edit_delay: float,
+                       start_date: str = None):
     """
     Navigate to the edit URL for row_id, fill all Price row inputs with new_price,
     click the confirm button. Reuses an already-logged-in driver.
     Returns (success: bool, message: str).
+    start_date: optional YY-MM-DD string appended as &startDate= query param.
     """
     import time
     from selenium.webdriver.common.by import By
     from selenium.webdriver.common.keys import Keys
 
-    edit_url = f"{rates_url}?action=edit&id={row_id}"
+    date_part = f"&startDate={start_date}" if start_date else ""
+    edit_url = f"{rates_url}{date_part}&action=edit&id={row_id}"
     driver.get(edit_url)
     time.sleep(edit_delay)
 
@@ -544,11 +549,13 @@ def update_multiple_rates(username: str, password: str,
                           updates: list,
                           rates_url: str = None,
                           login_delay: float = 5.0,
-                          edit_delay: float = 3.0):
+                          edit_delay: float = 3.0,
+                          start_date: str = None):
     """
     Log in ONCE then update multiple rows sequentially.
-    updates  : list of (size_str, new_price_str) e.g. [("2", "189"), ("3", "308")].
-    rates_url: URL of the rates management page; defaults to General Waste URL.
+    updates   : list of (size_str, new_price_str) e.g. [("2", "189"), ("3", "308")].
+    rates_url : URL of the rates management page; defaults to General Waste URL.
+    start_date: optional YY-MM-DD string for the &startDate= query param.
     Row IDs are auto-detected from the rates page — no hardcoding needed.
     Returns (success, message).
     """
@@ -562,7 +569,7 @@ def update_multiple_rates(username: str, password: str,
         if not ok:
             return False, msg
 
-        id_map = _get_row_id_map(driver, rates_url)
+        id_map = _get_row_id_map(driver, rates_url, start_date=start_date)
 
         if not id_map:
             page_title = driver.title
@@ -578,7 +585,8 @@ def update_multiple_rates(username: str, password: str,
             if row_id is None:
                 results.append(f"{size_str} m³: ❌ row not found (detected sizes: {list(id_map.keys())})")
                 continue
-            ok, msg = _update_single_row(driver, row_id, new_price, rates_url, edit_delay)
+            ok, msg = _update_single_row(driver, row_id, new_price, rates_url, edit_delay,
+                                          start_date=start_date)
             if ok:
                 results.append(f"{size_str} m³ → ${new_price} ✓")
             else:
@@ -602,11 +610,13 @@ def update_waste_type_rates(username: str, password: str,
                             waste_type: str,
                             updates: list,
                             login_delay: float = 5.0,
-                            edit_delay: float = 3.0):
+                            edit_delay: float = 3.0,
+                            start_date: str = None):
     """
     Log in and update prices for a specific waste type.
     waste_type : key in WASTE_TYPE_RATES_URLS
     updates    : list of (size_str, new_price_str)
+    start_date : optional YY-MM-DD string for the &startDate= query param.
     Returns (success, message).
     """
     rates_url = WASTE_TYPE_RATES_URLS.get(waste_type)
@@ -619,4 +629,5 @@ def update_waste_type_rates(username: str, password: str,
         rates_url=rates_url,
         login_delay=login_delay,
         edit_delay=edit_delay,
+        start_date=start_date,
     )

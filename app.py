@@ -61,6 +61,15 @@ def _dod_to_min_date(d_slash: str) -> str:
     return f"{year}-{int(month):02d}-{int(day):02d}"
 
 
+def _dod_to_sbo_date(d_slash: str) -> str:
+    """Convert D/MM/YYYY → YY-MM-DD for use in SBO rates URL startDate param."""
+    parts = d_slash.strip().split("/")
+    if len(parts) != 3:
+        return ""
+    day, month, year = parts
+    return f"{str(year)[-2:]}-{int(month):02d}-{int(day):02d}"
+
+
 # ---------------------------------------------------------------------------
 # Disk cache helpers  (survive F5 / page refresh)
 # ---------------------------------------------------------------------------
@@ -1966,6 +1975,7 @@ elif page == "SkipBinsOnline":
                         _sbo_edit_acc["username"], _sbo_edit_acc["password"],
                         waste_type=wt, updates=wt_updates,
                         login_delay=6, edit_delay=3,
+                        start_date=_dod_to_sbo_date(saved_dod) or None,
                     )
                     result = {"ok": ok, "msg": f"{wt} — {msg}"}
                     st.session_state[f"sbo_wt_result_{idx}"] = result
@@ -2157,6 +2167,13 @@ elif page == "SkipBinsOnline":
 
         _sbo_rate_waste = st.selectbox("Waste Type", list(SBO.WASTE_TYPE_RATES_URLS.keys()), key="sbo_rate_waste")
 
+        _sbo_rate_start_date = st.text_input(
+            "Start Date (D/MM/YYYY)",
+            value=st.session_state.get("sbo_search_dod", ""),
+            key="sbo_rate_start_date",
+            help="Schedule start date for the rates page (e.g. 8/04/2026). Leave blank to omit the startDate parameter.",
+        )
+
         st.markdown("##### Enter new prices for bin sizes < 7.5 m³")
         st.caption("Leave a field blank to skip that size. Sizes are updated in one login session.")
 
@@ -2213,6 +2230,7 @@ elif page == "SkipBinsOnline":
                             rates_url=SBO.WASTE_TYPE_RATES_URLS[_sbo_rate_waste],
                             login_delay=_sbo_rate_login_delay,
                             edit_delay=_sbo_rate_edit_delay,
+                            start_date=_dod_to_sbo_date(_sbo_rate_start_date) or None,
                         )
                     if _sbo_rok:
                         st.success(f"✅ Done!  {_sbo_rmsg}")
