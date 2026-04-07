@@ -1583,8 +1583,10 @@ elif page == "SkipBinFinder":
             for _wt, _sizes in sbf_results.items():
                 for _sz, _pr in _sizes.items():
                     if isinstance(_pr, (int, float)):
+                        # Strip "ns" suffix to get numeric base for the -1 rule
+                        _base = _sz[:-2] if _sz.endswith('ns') else _sz
                         try:
-                            _sz_f = float(_sz)
+                            _sz_f = float(_base)
                         except (ValueError, TypeError):
                             _sz_f = 0.0
                         if _wt in _SBF_MINUS1_WTS and (_sz_f <= 12.0 or _sz_f in _SBF_EXTRA_SZFS):
@@ -1597,6 +1599,7 @@ elif page == "SkipBinFinder":
 
             if _sbf_price_map:
                 _sbf_update_wts = [wt for wt in SBF.WASTE_TYPES if any(k[0] == wt for k in _sbf_price_map)]
+                # Include both regular and ns sizes that actually have data, ordered by ALL_SIZES
                 _sbf_update_szs = [sz for sz in SBF.ALL_SIZES if any(k[1] == sz for k in _sbf_price_map)]
                 _sbf_preview_rows = []
                 for _wt in _sbf_update_wts:
