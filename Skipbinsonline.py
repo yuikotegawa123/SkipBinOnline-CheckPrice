@@ -28,6 +28,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from bs4 import BeautifulSoup
 
+_MODULE_VERSION = "3-tuple-returns"  # update_multiple_rates / update_waste_type_rates return (ok, msg, screenshot)
+
 
 def _log(msg):
     """Append a line to sbo_debug.log next to the exe / script."""
