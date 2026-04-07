@@ -415,52 +415,54 @@ def login(username: str, password: str, login_delay: float = 5.0):
 def _update_single_row(driver, size: str, new_price: str, rates_url: str, edit_delay: float,
                        start_date: str = None):
     """
-    Navigate to the edit form for a bin size, fill all visible price inputs with
-    new_price, and click the confirm button. Reuses an already-logged-in driver.
+    Navigate to the edit form for a bin size, fill the price textarea/input and
+    click the confirm button. Reuses an already-logged-in driver.
     URL format: waste_schedules.php?cat_id=XX&edit={size}&startDate=YY-MM-DD
     Returns (success: bool, message: str).
     """
-    import os
     import time
     from selenium.webdriver.common.by import By
     from selenium.webdriver.common.keys import Keys
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
 
     date_part = f"&startDate={start_date}" if start_date else ""
     edit_url = f"{rates_url}&edit={size}{date_part}"
     driver.get(edit_url)
     time.sleep(edit_delay)
 
-    def _find_editable_inputs():
-        """Return all visible, enabled, non-readonly text/number inputs in main frame."""
-        candidates = driver.find_elements(
-            By.CSS_SELECTOR,
-            "input[type='text'], input[type='number'], input:not([type='button'])"
-            ":not([type='submit']):not([type='reset']):not([type='image'])"
-            ":not([type='checkbox']):not([type='radio']):not([type='hidden'])"
-        )
-        return [
-            inp for inp in candidates
-            if inp.is_displayed() and inp.is_enabled()
-            and inp.get_attribute("readonly") is None
-        ]
+    EDITABLE_CSS = (
+        "textarea, "
+        "input[type='text'], input[type='number'], "
+        "input:not([type='button']):not([type='submit']):not([type='reset'])"
+        ":not([type='image']):not([type='checkbox']):not([type='radio'])"
+        ":not([type='hidden'])"
+    )
 
-    # Wait up to 8 s for any editable input to appear
+    def _get_editable(ctx):
+        els = ctx.find_elements(By.CSS_SELECTOR, EDITABLE_CSS)
+        return [e for e in els if e.is_displayed() and e.is_enabled()
+                and e.get_attribute("readonly") is None]
+
+    # Wait up to 8 s for inputs to appear in main frame first
     editable = []
+    frame_used = None
     for _ in range(8):
-        editable = _find_editable_inputs()
+        editable = _get_editable(driver)
         if editable:
             break
         time.sleep(1)
 
-    # If not found in main frame, check iframes
+    # If not in main frame, try every iframe
     if not editable:
         iframes = driver.find_elements(By.TAG_NAME, "iframe")
         for frame in iframes:
             try:
                 driver.switch_to.frame(frame)
-                editable = _find_editable_inputs()
+                for _ in range(6):
+                    editable = _get_editable(driver)
+                    if editable:
+                        frame_used = frame
+                        break
+                    time.sleep(1)
                 if editable:
                     break
                 driver.switch_to.default_content()
@@ -468,71 +470,21 @@ def _update_single_row(driver, size: str, new_price: str, rates_url: str, edit_d
                 driver.switch_to.default_content()
 
     if not editable:
-        # Try hidden inputs that look price-related
         driver.switch_to.default_content()
-        hidden = driver.find_elements(By.CSS_SELECTOR, "input[type='hidden']")
-        price_hidden = [
-            h for h in hidden
-            if any(kw in (h.get_attribute("name") or "").lower()
-                   for kw in ("price", "rate", "cost", "amount", "val"))
-        ]
-        if price_hidden:
-            for h in price_hidden:
-                driver.execute_script("arguments[0].value = arguments[1];", h, new_price)
-            # click first visible submit/button
-            for by, sel in [
-                (By.CSS_SELECTOR, "input[type='button']"),
-                (By.CSS_SELECTOR, "input[type='submit']"),
-                (By.CSS_SELECTOR, "input[type='image']"),
-            ]:
-                btns = [b for b in driver.find_elements(by, sel) if b.is_displayed()]
-                if btns:
-                    driver.execute_script("arguments[0].click();", btns[0])
-                    time.sleep(2)
-                    return True, f"{size} m³ → ${new_price} ✓ (hidden input)"
-            return False, f"{size} m³: updated hidden input but no save button found."
-
-        # Full diagnostic: save page source and summarise all elements
-        driver.switch_to.default_content()
-        all_inp = driver.find_elements(By.TAG_NAME, "input")
-        inp_diag = "; ".join(
-            f"type={el.get_attribute('type')!r} name={el.get_attribute('name')!r}"
-            f" id={el.get_attribute('id')!r} val={el.get_attribute('value')!r}"
-            f" vis={el.is_displayed()}"
-            for el in all_inp[:30]
-        ) or "none"
-        selects   = len(driver.find_elements(By.TAG_NAME, "select"))
-        textareas = len(driver.find_elements(By.TAG_NAME, "textarea"))
-        iframes_n = len(driver.find_elements(By.TAG_NAME, "iframe"))
-        content_e = len(driver.find_elements(By.CSS_SELECTOR, "[contenteditable='true']"))
-
-        # Save page source to temp file for inspection
-        try:
-            src_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                    ".cache", "sbo_edit_debug.html")
-            os.makedirs(os.path.dirname(src_path), exist_ok=True)
-            with open(src_path, "w", encoding="utf-8") as fh:
-                fh.write(driver.page_source)
-        except Exception:
-            src_path = "(could not save)"
-
         return False, (
-            f"{size} m³: no editable inputs found. "
-            f"URL={driver.current_url} | "
-            f"inputs=[{inp_diag}] | "
-            f"selects={selects} textareas={textareas} iframes={iframes_n} "
-            f"contenteditable={content_e} | "
-            f"page source saved to: {src_path}"
+            f"{size} m³: no editable inputs/textareas found even inside iframes. "
+            f"URL={driver.current_url}"
         )
 
-    for inp in editable:
+    for el in editable:
         try:
-            driver.execute_script("arguments[0].value = '';", inp)
-            inp.click()
-            inp.send_keys(new_price)
+            driver.execute_script("arguments[0].value = '';", el)
+            el.click()
+            el.send_keys(new_price)
         except Exception:
             pass
 
+    # Find and click the save/confirm button (within whichever context we're in)
     confirm_btn = None
     for by, sel in [
         (By.CSS_SELECTOR, "input[type='image']"),
@@ -541,8 +493,7 @@ def _update_single_row(driver, size: str, new_price: str, rates_url: str, edit_d
         (By.XPATH, "//button[@type='submit']"),
         (By.XPATH, "//button"),
     ]:
-        els = driver.find_elements(by, sel)
-        for el in els:
+        for el in driver.find_elements(by, sel):
             if el.is_displayed():
                 confirm_btn = el
                 break
@@ -550,6 +501,7 @@ def _update_single_row(driver, size: str, new_price: str, rates_url: str, edit_d
             break
 
     if confirm_btn is None:
+        driver.switch_to.default_content()
         return False, f"{size} m³: filled inputs but could not find confirm button."
 
     driver.execute_script("arguments[0].click();", confirm_btn)
