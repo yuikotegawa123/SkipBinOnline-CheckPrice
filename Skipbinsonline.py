@@ -412,82 +412,20 @@ def login(username: str, password: str, login_delay: float = 5.0):
 # Supplier rate price updater  (Selenium)
 # ---------------------------------------------------------------------------
 
-def _get_row_id_map(driver, rates_url: str, start_date: str = None) -> dict:
-    """
-    Load the rates page and return a dict mapping bin size string to row id string.
-    e.g. {"2": "1", "3": "2", "5": "7", ...}
-    Row IDs are read from the edit pencil links (?action=edit&id=N).
-    start_date: optional YY-MM-DD string appended as &startDate= query param.
-    """
-    import re
-    import time
-
-    nav_url = rates_url + (f"&startDate={start_date}" if start_date else "")
-    driver.get(nav_url)
-    time.sleep(3)
-
-    soup = BeautifulSoup(driver.page_source, "html.parser")
-    id_map = {}
-    current_size = None
-
-    for row in soup.find_all("tr"):
-        for td in row.find_all("td"):
-            try:
-                if int(td.get("rowspan", 1)) > 1:
-                    m = re.match(r"(\d+(?:\.\d+)?)\s*cubic", td.get_text(strip=True).lower())
-                    if m:
-                        current_size = m.group(1)
-            except (ValueError, TypeError):
-                pass
-
-        if current_size and current_size not in id_map:
-            for tag in row.find_all(True):
-                for attr in ("href", "onclick"):
-                    val = tag.get(attr, "")
-                    if "action=edit" in val:
-                        m = re.search(r"[?&](?:amp;)?id=(\d+)", val)
-                        if m:
-                            id_map[current_size] = m.group(1)
-                            break
-                else:
-                    continue
-                break
-
-    # Fallback: scan ALL links on the page for action=edit + id=N
-    if not id_map:
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            if "action=edit" not in href:
-                continue
-            m = re.search(r"[?&](?:amp;)?id=(\d+)", href)
-            if not m:
-                continue
-            row_id = m.group(1)
-            tr = a.find_parent("tr")
-            if not tr:
-                continue
-            row_text = tr.get_text(" ", strip=True)
-            sm = re.search(r"\b(\d+(?:\.\d+)?)\s*(?:cubic|m³|m3)", row_text, re.IGNORECASE)
-            if sm and sm.group(1) not in id_map:
-                id_map[sm.group(1)] = row_id
-
-    return id_map
-
-
-def _update_single_row(driver, row_id: str, new_price: str, rates_url: str, edit_delay: float,
+def _update_single_row(driver, size: str, new_price: str, rates_url: str, edit_delay: float,
                        start_date: str = None):
     """
-    Navigate to the edit URL for row_id, fill all Price row inputs with new_price,
-    click the confirm button. Reuses an already-logged-in driver.
+    Navigate to the edit form for a bin size, fill all visible price inputs with
+    new_price, and click the confirm button. Reuses an already-logged-in driver.
+    URL format: waste_schedules.php?cat_id=XX&edit={size}&startDate=YY-MM-DD
     Returns (success: bool, message: str).
-    start_date: optional YY-MM-DD string appended as &startDate= query param.
     """
     import time
     from selenium.webdriver.common.by import By
     from selenium.webdriver.common.keys import Keys
 
     date_part = f"&startDate={start_date}" if start_date else ""
-    edit_url = f"{rates_url}{date_part}&action=edit&id={row_id}"
+    edit_url = f"{rates_url}&edit={size}{date_part}"
     driver.get(edit_url)
     time.sleep(edit_delay)
 
@@ -502,47 +440,34 @@ def _update_single_row(driver, row_id: str, new_price: str, rates_url: str, edit
         visible_inputs = [inp for inp in table_inputs if inp.is_displayed()]
 
     if not visible_inputs:
-        return False, f"Row {row_id}: could not find price inputs."
+        return False, f"{size} m\u00b3: could not find price inputs on edit form."
 
-    for inp in visible_inputs[:2]:
+    for inp in visible_inputs:
         inp.click()
         inp.send_keys(Keys.CONTROL + "a")
         inp.send_keys(new_price)
 
-    last_input = visible_inputs[min(1, len(visible_inputs) - 1)]
     confirm_btn = None
     for by, sel in [
-        (By.XPATH, ".//following::input[@type='image'][1]"),
-        (By.XPATH, ".//following::input[@type='submit'][1]"),
-        (By.XPATH, ".//following::button[1]"),
+        (By.CSS_SELECTOR, "input[type='image']"),
+        (By.CSS_SELECTOR, "input[type='submit']"),
+        (By.XPATH, "//button[@type='submit']"),
+        (By.XPATH, "//button[contains(translate(text(),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'save') or contains(translate(text(),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'update') or contains(translate(text(),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'confirm')]"),
     ]:
-        try:
-            el = last_input.find_element(by, sel)
+        els = driver.find_elements(by, sel)
+        for el in els:
             if el.is_displayed():
                 confirm_btn = el
                 break
-        except Exception:
-            continue
+        if confirm_btn:
+            break
 
     if confirm_btn is None:
-        for by, sel in [
-            (By.CSS_SELECTOR, "table input[type='image']"),
-            (By.CSS_SELECTOR, "table input[type='submit']"),
-        ]:
-            els = driver.find_elements(by, sel)
-            for el in els:
-                if el.is_displayed():
-                    confirm_btn = el
-                    break
-            if confirm_btn:
-                break
-
-    if confirm_btn is None:
-        return False, f"Row {row_id}: could not find confirm (✓) button."
+        return False, f"{size} m\u00b3: could not find confirm button on edit form."
 
     driver.execute_script("arguments[0].click();", confirm_btn)
     time.sleep(2)
-    return True, f"Row {row_id} → ${new_price} ✓"
+    return True, f"{size} m\u00b3 \u2192 ${new_price} \u2713"
 
 
 def update_multiple_rates(username: str, password: str,
@@ -569,28 +494,13 @@ def update_multiple_rates(username: str, password: str,
         if not ok:
             return False, msg
 
-        id_map = _get_row_id_map(driver, rates_url, start_date=start_date)
-
-        if not id_map:
-            page_title = driver.title
-            current_url = driver.current_url
-            return False, (
-                f"Could not detect any row IDs on the rates page. "
-                f"Page title: '{page_title}' | URL: {current_url} — "
-                f"The supplier may not be logged in, or the page structure has changed."
-            )
-
         for size_str, new_price in updates:
-            row_id = id_map.get(size_str)
-            if row_id is None:
-                results.append(f"{size_str} m³: ❌ row not found (detected sizes: {list(id_map.keys())})")
-                continue
-            ok, msg = _update_single_row(driver, row_id, new_price, rates_url, edit_delay,
-                                          start_date=start_date)
+            ok, msg = _update_single_row(driver, size_str, new_price, rates_url, edit_delay,
+                                         start_date=start_date)
             if ok:
-                results.append(f"{size_str} m³ → ${new_price} ✓")
+                results.append(msg)
             else:
-                results.append(f"{size_str} m³: ❌ {msg}")
+                results.append(f"{size_str} m\u00b3: \u274c {msg}")
 
         all_ok = all("❌" not in r for r in results)
         summary = "  |  ".join(results)
