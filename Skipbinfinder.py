@@ -168,7 +168,7 @@ def _parse_step4_prices(driver):
     prices = {}
     pattern = re.compile(
         r'(\d+(?:\.\d+)?)\s+cubic\s+met(?:er|re)s?\s+'
-        r'(?:Trailer Bin\s+)?Best Price\s+\$([0-9,]+(?:\.\d+)?)',
+        r'Best Price\s+\$([0-9,]+(?:\.\d+)?)',
         re.IGNORECASE
     )
     for m in pattern.finditer(body_text):
