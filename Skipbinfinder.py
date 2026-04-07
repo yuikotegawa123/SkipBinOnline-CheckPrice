@@ -156,19 +156,29 @@ def _parse_dmy(date_str):
 def _parse_step4_prices(driver):
     """
     Parse the step-4 bin-size listing and return a dict: {size_str -> min_price}.
-    Handles duplicate size entries (e.g. two 3m³ bins from different suppliers)
-    by keeping the lowest price.  Skips Trailer Bin entries entirely.
+    'Trailer Bin' entries are skipped entirely.
+    'Soil not accepted in this bin' entries are stored under 'Xns' key.
     """
     from selenium.webdriver.common.by import By
     body_text = driver.find_element(By.TAG_NAME, "body").text
 
-    # Parse line-by-line so we can detect the "Trailer Bin" label that appears
-    # on the line immediately before (or within a few lines of) the size line.
-    prices = {}
-    lines  = [l.strip() for l in body_text.split('\n')]
-    size_re  = re.compile(r'^(\d+(?:\.\d+)?)\s+cubic\s+met(?:er|re)s?$', re.IGNORECASE)
-    price_re = re.compile(r'^Best\s+Price$', re.IGNORECASE)
+    lines     = [l.strip() for l in body_text.split('\n')]
+    size_re   = re.compile(r'^(\d+(?:\.\d+)?)\s+cubic\s+met(?:er|re)s?$', re.IGNORECASE)
+    price_re  = re.compile(r'^Best\s+Price$', re.IGNORECASE)
     dollar_re = re.compile(r'^\$([0-9,]+(?:\.\d+)?)$')
+
+    # Pre-map every line index that contains a special label so we can check
+    # any window regardless of whether the label comes before or after the price.
+    trailer_lines  = set()
+    no_soil_lines  = set()
+    for idx, ln in enumerate(lines):
+        if re.search(r'trailer\s*bin', ln, re.IGNORECASE):
+            trailer_lines.add(idx)
+        if re.search(r'soil\s+not\s+accepted', ln, re.IGNORECASE):
+            no_soil_lines.add(idx)
+
+    prices = {}
+    WINDOW = 18   # lines to scan either side of the size line
 
     for i, line in enumerate(lines):
         m = size_re.match(line)
@@ -176,19 +186,21 @@ def _parse_step4_prices(driver):
             continue
         size = m.group(1)
 
-        # Check the 3 lines PRECEDING this size line for "Trailer Bin"
-        preceding = lines[max(0, i - 3): i]
-        if any(re.search(r'trailer\s*bin', p, re.IGNORECASE) for p in preceding):
+        # Window around this size line
+        win_start = max(0, i - 4)
+        win_end   = min(len(lines), i + WINDOW)
+        window    = range(win_start, win_end)
+
+        # Skip Trailer Bin entries
+        if any(j in trailer_lines for j in window):
             continue
 
-        # Scan forward up to 15 lines to find the Best Price AND detect labels
-        # that appear BETWEEN the size line and the price (e.g. "Soil not accepted in this bin")
-        best_price = None
-        no_soil    = False
-        for j in range(i + 1, min(i + 15, len(lines))):
-            if re.search(r'soil\s+not\s+accepted', lines[j], re.IGNORECASE):
-                no_soil = True
+        # Detect no-soil label anywhere in the window (before OR after size line)
+        no_soil = any(j in no_soil_lines for j in window)
 
+        # Scan FORWARD for Best Price
+        best_price = None
+        for j in range(i + 1, win_end):
             if price_re.match(lines[j]):
                 inline = re.search(r'\$([0-9,]+(?:\.\d+)?)', lines[j])
                 if inline:
@@ -211,6 +223,7 @@ def _parse_step4_prices(driver):
             if key not in prices or best_price < prices[key]:
                 prices[key] = best_price
 
+    _log(f"[SBF] _parse_step4_prices result: {prices}")
     return prices
 
 
