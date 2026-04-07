@@ -418,112 +418,142 @@ def _update_single_row(driver, size: str, new_price: str, rates_url: str, edit_d
                        start_date: str = None):
     """
     Session is already established (Marrel + waste-type clicked in caller).
-    1. Navigate directly to the edit URL for this size.
-    2. Screenshot and dump partial HTML on failure for debugging.
-    3. Find price inputs (textarea/text/number) in main frame then iframes.
-    4. Clear and type the new price.
-    5. Click the save/submit button.
+    Navigate to edit URL, fill price inputs, click save.
     Returns (success: bool, message: str, screenshot: bytes|None).
+    All exceptions are caught internally so the caller loop never crashes.
     """
     import time
     from selenium.webdriver.common.by import By
+    from selenium.webdriver.common.keys import Keys
 
-    date_part = f"&startDate={start_date}" if start_date else ""
-    edit_url = f"{rates_url}{date_part}&edit={size}"
-
-    driver.switch_to.default_content()
-    driver.get(edit_url)
-    time.sleep(edit_delay)
-
-    # Screenshot the edit form
     diag_shot = None
-    try:
-        diag_shot = driver.get_screenshot_as_png()
-    except Exception:
-        pass
 
-    EDITABLE_CSS = "textarea, input[type='text'], input[type='number']"
-
-    def _get_editable(ctx):
-        els = ctx.find_elements(By.CSS_SELECTOR, EDITABLE_CSS)
-        return [e for e in els
-                if e.is_displayed() and e.is_enabled()
-                and e.get_attribute("readonly") is None]
-
-    def _find_save_btn(ctx):
-        for by, sel in [
-            (By.CSS_SELECTOR, "input[type='image']"),
-            (By.CSS_SELECTOR, "input[type='submit']"),
-            (By.XPATH, "//button[@type='submit']"),
-            (By.XPATH, "//button"),
-            (By.CSS_SELECTOR, "input[type='button']"),
-        ]:
-            for el in ctx.find_elements(by, sel):
-                v = (el.get_attribute("value") or el.text or "").lower()
-                if any(w in v for w in ("supplier", "account", "service", "waste schedule",
-                                        "report", "logout", "stock", "marrel", "household",
-                                        "general", "excavation", "rubble", "clean", "green",
-                                        "asbestos", "building", "mixed", "light")):
-                    continue
-                if el.is_displayed():
-                    return el
-        return None
-
-    # Try main frame first (wait up to 8 s)
-    editable = []
-    for _ in range(8):
-        editable = _get_editable(driver)
-        if editable:
-            break
-        time.sleep(1)
-
-    # Fall back to iframes
-    if not editable:
-        iframes = driver.find_elements(By.TAG_NAME, "iframe")
-        for frame in iframes:
-            try:
-                driver.switch_to.frame(frame)
-                for _ in range(6):
-                    editable = _get_editable(driver)
-                    if editable:
-                        break
-                    time.sleep(1)
-                if editable:
-                    break
-                driver.switch_to.default_content()
-            except Exception:
-                driver.switch_to.default_content()
-
-    if not editable:
-        driver.switch_to.default_content()
+    def _snap():
+        nonlocal diag_shot
         try:
-            src_excerpt = driver.page_source[:2000]
-        except Exception:
-            src_excerpt = "(unavailable)"
-        return False, (
-            f"{size} m³: no editable inputs on edit form. "
-            f"URL={driver.current_url} | title={driver.title!r} | "
-            f"HTML[:2000]={src_excerpt}"
-        ), diag_shot
-
-    # Fill every visible price input
-    for el in editable:
-        try:
-            driver.execute_script("arguments[0].value = '';", el)
-            el.click()
-            el.send_keys(new_price)
+            diag_shot = driver.get_screenshot_as_png()
         except Exception:
             pass
 
-    confirm_btn = _find_save_btn(driver)
-    if confirm_btn is None:
-        driver.switch_to.default_content()
-        return False, f"{size} m³: price filled but save button not found.", diag_shot
+    try:
+        date_part = f"&startDate={start_date}" if start_date else ""
+        edit_url = f"{rates_url}{date_part}&edit={size}"
 
-    driver.execute_script("arguments[0].click();", confirm_btn)
-    time.sleep(2)
-    driver.switch_to.default_content()
-    return True, f"{size} m³ → ${new_price} ✓", diag_shot
+        driver.switch_to.default_content()
+        driver.get(edit_url)
+        time.sleep(edit_delay)
+        _snap()   # screenshot of edit form
+
+        # Broad selector: all visible inputs except navigation/hidden/checkbox types
+        EDITABLE_CSS = (
+            "input:not([type='hidden']):not([type='submit']):not([type='button'])"
+            ":not([type='image']):not([type='reset']):not([type='checkbox']):not([type='radio']), "
+            "textarea"
+        )
+
+        def _get_editable(ctx):
+            return [e for e in ctx.find_elements(By.CSS_SELECTOR, EDITABLE_CSS)
+                    if e.is_displayed() and e.is_enabled()]
+
+        # Wait up to 8 s in main frame
+        editable = []
+        for _ in range(8):
+            editable = _get_editable(driver)
+            if editable:
+                break
+            time.sleep(1)
+
+        # Fall back to iframes
+        if not editable:
+            for frame in driver.find_elements(By.TAG_NAME, "iframe"):
+                try:
+                    driver.switch_to.frame(frame)
+                    for _ in range(4):
+                        editable = _get_editable(driver)
+                        if editable:
+                            break
+                        time.sleep(1)
+                    if editable:
+                        break
+                    driver.switch_to.default_content()
+                except Exception:
+                    driver.switch_to.default_content()
+
+        if not editable:
+            driver.switch_to.default_content()
+            try:
+                src_excerpt = driver.page_source[:3000]
+            except Exception:
+                src_excerpt = "(unavailable)"
+            return False, (
+                f"{size} m³: no editable inputs on edit form. "
+                f"URL={driver.current_url} | "
+                f"HTML[:3000]={src_excerpt}"
+            ), diag_shot
+
+        # Fill all visible price inputs using JS (bypasses readonly) + send_keys for events
+        last_el = None
+        for el in editable:
+            try:
+                driver.execute_script(
+                    "arguments[0].removeAttribute('readonly'); arguments[0].value = '';",
+                    el)
+                el.click()
+                el.send_keys(Keys.CONTROL + "a")
+                el.send_keys(new_price)
+                last_el = el
+            except Exception:
+                pass
+
+        # Find save button: prefer image/submit, skip obvious nav buttons
+        def _find_save_btn(ctx):
+            _NAV = ("supplier", "account", "service", "waste schedule",
+                    "report", "logout", "stock")
+            for by, sel in [
+                (By.CSS_SELECTOR, "input[type='image']"),
+                (By.CSS_SELECTOR, "input[type='submit']"),
+                (By.XPATH, "//button[@type='submit']"),
+                (By.XPATH, "//button"),
+                (By.CSS_SELECTOR, "input[type='button']"),
+            ]:
+                for el in ctx.find_elements(by, sel):
+                    if not el.is_displayed():
+                        continue
+                    v = (el.get_attribute("value") or
+                         el.get_attribute("alt") or
+                         el.text or "").lower()
+                    if any(w in v for w in _NAV):
+                        continue
+                    return el
+            return None
+
+        save_btn = _find_save_btn(driver)
+        if save_btn is not None:
+            driver.execute_script("arguments[0].click();", save_btn)
+            time.sleep(2)
+            driver.switch_to.default_content()
+            return True, f"{size} m³ → ${new_price} ✓", diag_shot
+
+        # Last resort: submit the form containing the price input
+        if last_el is not None:
+            try:
+                driver.execute_script("arguments[0].form.submit();", last_el)
+                time.sleep(2)
+                driver.switch_to.default_content()
+                return True, f"{size} m³ → ${new_price} ✓ (form.submit)", diag_shot
+            except Exception as fe:
+                pass
+
+        driver.switch_to.default_content()
+        return False, f"{size} m³: price inputs filled but no save button found.", diag_shot
+
+    except Exception as exc:
+        _snap()
+        try:
+            driver.switch_to.default_content()
+        except Exception:
+            pass
+        return False, f"{size} m³: exception — {exc}", diag_shot
 
 
 def update_multiple_rates(username: str, password: str,
