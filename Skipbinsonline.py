@@ -417,10 +417,13 @@ def login(username: str, password: str, login_delay: float = 5.0):
 def _update_single_row(driver, size: str, new_price: str, rates_url: str, edit_delay: float,
                        start_date: str = None):
     """
-    Navigate to the edit form for a bin size, fill the price textarea/input and
-    click the confirm button. Reuses an already-logged-in driver.
-    URL format: waste_schedules.php?cat_id=XX&edit={size}&startDate=YY-MM-DD
-    Returns (success: bool, message: str).
+    From the already-loaded price-table (save=true) page:
+      1. Navigate to the edit URL for this size  (?edit=SIZE&startDate=...)
+      2. Take a diagnostic screenshot (returned in tuple for caller)
+      3. Find price inputs (textarea / text / number) in main frame then iframes
+      4. Clear and type the new price
+      5. Click the save/submit button
+    Returns (success: bool, message: str, screenshot: bytes|None).
     """
     import time
     from selenium.webdriver.common.by import By
@@ -428,32 +431,57 @@ def _update_single_row(driver, size: str, new_price: str, rates_url: str, edit_d
 
     date_part = f"&startDate={start_date}" if start_date else ""
     edit_url = f"{rates_url}&edit={size}{date_part}"
+    driver.switch_to.default_content()
     driver.get(edit_url)
     time.sleep(edit_delay)
 
+    # Screenshot the edit page so we can debug if it fails
+    diag_shot = None
+    try:
+        diag_shot = driver.get_screenshot_as_png()
+    except Exception:
+        pass
+
     EDITABLE_CSS = (
         "textarea, "
-        "input[type='text'], input[type='number'], "
-        "input:not([type='button']):not([type='submit']):not([type='reset'])"
-        ":not([type='image']):not([type='checkbox']):not([type='radio'])"
-        ":not([type='hidden'])"
+        "input[type='text'], input[type='number']"
     )
 
     def _get_editable(ctx):
         els = ctx.find_elements(By.CSS_SELECTOR, EDITABLE_CSS)
-        return [e for e in els if e.is_displayed() and e.is_enabled()
+        return [e for e in els
+                if e.is_displayed() and e.is_enabled()
                 and e.get_attribute("readonly") is None]
 
-    # Wait up to 8 s for inputs to appear in main frame first
+    def _find_save_btn(ctx):
+        for by, sel in [
+            (By.CSS_SELECTOR, "input[type='image']"),
+            (By.CSS_SELECTOR, "input[type='submit']"),
+            (By.XPATH, "//button[@type='submit']"),
+            (By.XPATH, "//button"),
+            (By.CSS_SELECTOR, "input[type='button']"),
+        ]:
+            for el in ctx.find_elements(by, sel):
+                v = (el.get_attribute("value") or el.text or "").lower()
+                # skip navigation buttons
+                if any(w in v for w in ("supplier", "account", "service", "waste schedule",
+                                        "report", "logout", "stock", "marrel", "household",
+                                        "general", "excavation", "rubble", "clean", "green",
+                                        "asbestos", "building", "mixed", "light")):
+                    continue
+                if el.is_displayed():
+                    return el
+        return None
+
+    # Try main frame first (wait up to 8 s)
     editable = []
-    frame_used = None
     for _ in range(8):
         editable = _get_editable(driver)
         if editable:
             break
         time.sleep(1)
 
-    # If not in main frame, try every iframe
+    # Fall back to iframes
     if not editable:
         iframes = driver.find_elements(By.TAG_NAME, "iframe")
         for frame in iframes:
@@ -462,7 +490,6 @@ def _update_single_row(driver, size: str, new_price: str, rates_url: str, edit_d
                 for _ in range(6):
                     editable = _get_editable(driver)
                     if editable:
-                        frame_used = frame
                         break
                     time.sleep(1)
                 if editable:
@@ -474,10 +501,12 @@ def _update_single_row(driver, size: str, new_price: str, rates_url: str, edit_d
     if not editable:
         driver.switch_to.default_content()
         return False, (
-            f"{size} m³: no editable inputs/textareas found even inside iframes. "
-            f"URL={driver.current_url}"
-        )
+            f"{size} m³: no editable inputs found on edit form. "
+            f"URL={driver.current_url} | "
+            f"page title={driver.title!r}"
+        ), diag_shot
 
+    # Fill every visible price input
     for el in editable:
         try:
             driver.execute_script("arguments[0].value = '';", el)
@@ -486,30 +515,15 @@ def _update_single_row(driver, size: str, new_price: str, rates_url: str, edit_d
         except Exception:
             pass
 
-    # Find and click the save/confirm button (within whichever context we're in)
-    confirm_btn = None
-    for by, sel in [
-        (By.CSS_SELECTOR, "input[type='image']"),
-        (By.CSS_SELECTOR, "input[type='submit']"),
-        (By.CSS_SELECTOR, "input[type='button']"),
-        (By.XPATH, "//button[@type='submit']"),
-        (By.XPATH, "//button"),
-    ]:
-        for el in driver.find_elements(by, sel):
-            if el.is_displayed():
-                confirm_btn = el
-                break
-        if confirm_btn:
-            break
-
+    confirm_btn = _find_save_btn(driver)
     if confirm_btn is None:
         driver.switch_to.default_content()
-        return False, f"{size} m³: filled inputs but could not find confirm button."
+        return False, f"{size} m³: price filled but save button not found.", diag_shot
 
     driver.execute_script("arguments[0].click();", confirm_btn)
     time.sleep(2)
     driver.switch_to.default_content()
-    return True, f"{size} m³ → ${new_price} ✓"
+    return True, f"{size} m³ → ${new_price} ✓", diag_shot
 
 
 def update_multiple_rates(username: str, password: str,
@@ -599,12 +613,14 @@ def update_multiple_rates(username: str, password: str,
 
         # ── Step 5: Edit each size ─────────────────────────────────────────────
         for size_str, new_price in updates:
-            ok, msg = _update_single_row(driver, size_str, new_price, rates_url, edit_delay,
-                                         start_date=start_date)
+            ok, msg, edit_shot = _update_single_row(driver, size_str, new_price, rates_url,
+                                                    edit_delay, start_date=start_date)
+            if edit_shot:
+                screenshots.append(edit_shot)
             if ok:
                 results.append(msg)
             else:
-                results.append(f"{size_str} m\u00b3: \u274c {msg}")
+                results.append(f"{size_str} m³: ❌ {msg}")
 
         all_ok = all("\u274c" not in r for r in results)
         summary = "  |  ".join(results)
