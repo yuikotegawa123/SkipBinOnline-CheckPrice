@@ -538,7 +538,24 @@ def update_multiple_rates(username: str, password: str,
                 pass
             return False, msg, screenshot
 
-        # Navigate to the price-table view (&save=true) — required to load the
+        # Step 1: Click the Marrel bin type to establish session state — without
+        # this the server returns the bare availability grid with no waste type
+        # tabs and no price table, regardless of the URL parameters used.
+        _BASE_WS = "https://order.skipbinsonline.com.au/order/supplier/waste_schedules.php"
+        driver.get(_BASE_WS)
+        time.sleep(2)
+        try:
+            marrel_btn = driver.find_element(
+                By.XPATH,
+                "//input[@type='button' and contains(translate(@value,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'marrel')]"
+                " | //button[contains(translate(text(),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'marrel')]"
+            )
+            driver.execute_script("arguments[0].click();", marrel_btn)
+            time.sleep(2)
+        except Exception:
+            pass  # Marrel already selected or page structure differs
+
+        # Step 2: Navigate to the price-table view (&save=true) — required to load the
         # price-editing interface; without it only the availability grid is shown.
         date_part = f"&startDate={start_date}" if start_date else ""
         save_url = rates_url + date_part + "&save=true"
