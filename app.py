@@ -22,11 +22,23 @@ import Skipbinsonline as SBO
 # Helpers
 # ---------------------------------------------------------------------------
 
-# Full union of every size across all four scrapers, sorted numerically.
+# Full union of every size across all four scrapers.
+# ns-suffixed sizes (e.g. "3ns" = 3 m³ no-soil) sort immediately after their base size.
+def _size_sort_key(s):
+    base = s[:-2] if s.endswith('ns') else s
+    return (float(base), 1 if s.endswith('ns') else 0)
+
 FULL_SIZES = sorted(
     set(Bookabin.ALL_SIZES) | set(BPSB.ALL_SIZES) | set(SBF.ALL_SIZES) | set(SBO.ALL_SIZES),
-    key=float,
+    key=_size_sort_key,
 )
+
+
+def _fmt_size_col(s: str) -> str:
+    """Return a display column name for a size key, e.g. '3ns' → '3 m³ (no soil)'."""
+    if s.endswith('ns'):
+        return f"{s[:-2]} m³ (no soil)"
+    return f"{s} m³"
 
 
 def _to_df(results: dict, waste_types_map: dict, all_sizes: list) -> pd.DataFrame:
@@ -36,9 +48,9 @@ def _to_df(results: dict, waste_types_map: dict, all_sizes: list) -> pd.DataFram
         for s in all_sizes:
             price = results.get(wt, {}).get(s)
             if isinstance(price, (int, float)):
-                row[f"{s} m³"] = f"${price:,.0f}"
+                row[_fmt_size_col(s)] = f"${price:,.0f}"
             else:
-                row[f"{s} m³"] = "N/A"
+                row[_fmt_size_col(s)] = "N/A"
         rows.append(row)
     return pd.DataFrame(rows).set_index("Waste Type")
 
@@ -1591,7 +1603,7 @@ elif page == "SkipBinFinder":
                     _row = {"Waste Type": _wt}
                     for _sz in _sbf_update_szs:
                         _val = _sbf_price_map.get((_wt, _sz))
-                        _row[f"{_sz} m³"] = f"${_val:,.0f}" if _val is not None else "N/A"
+                        _row[_fmt_size_col(_sz)] = f"${_val:,.0f}" if _val is not None else "N/A"
                     _sbf_preview_rows.append(_row)
                 _df_sbf_preview = pd.DataFrame(_sbf_preview_rows).set_index("Waste Type")
                 st.dataframe(_df_sbf_preview, width='stretch')

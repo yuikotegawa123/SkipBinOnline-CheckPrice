@@ -46,7 +46,7 @@ WASTE_TYPES = {
     "Soil / Dirt":       ["2","3","4","5","6","7","8","9","10","12"],
 }
 
-ALL_SIZES = ["2","2.5","3","3.5","4","5","5.5","6","7","8","9","10","11","12","14","15","16","20","25","30"]
+ALL_SIZES = ["2","2ns","2.5","3","3ns","3.5","4","4ns","5","5ns","5.5","6","6ns","7","7ns","8","8ns","9","9ns","10","10ns","11","11ns","12","12ns","14","15","16","20","25","30"]
 
 # ---------------------------------------------------------------------------
 # Selenium helpers
@@ -176,10 +176,14 @@ def _parse_step4_prices(driver):
             continue
         size = m.group(1)
 
-        # Check the 3 lines preceding this size line for "Trailer Bin"
+        # Check the 3 lines preceding this size line for special labels
         preceding = lines[max(0, i - 3): i]
         if any(re.search(r'trailer\s*bin', p, re.IGNORECASE) for p in preceding):
             continue
+
+        # Detect "Soil not accepted in this bin" → store under size + "ns" key
+        no_soil = any(re.search(r'soil\s+not\s+accepted', p, re.IGNORECASE) for p in preceding)
+        key = size + 'ns' if no_soil else size
 
         # Scan forward for "Best Price" then "$XXX"
         best_price = None
@@ -203,8 +207,8 @@ def _parse_step4_prices(driver):
                 break
 
         if best_price is not None:
-            if size not in prices or best_price < prices[size]:
-                prices[size] = best_price
+            if key not in prices or best_price < prices[key]:
+                prices[key] = best_price
 
     return prices
 
@@ -358,6 +362,15 @@ def run_search(postcode, dod, pud, cell_q, status_q, done_event):
                 status_q.put(
                     f"SBF  {done_cnt[0]}/{total}  –  {waste_name}  {size} m³"
                 )
+
+        # Emit any no-soil variants found (keyed as "Xns")
+        for key, price in prices.items():
+            if key.endswith('ns'):
+                cell_q.put((waste_name, key, price))
+                with lock:
+                    status_q.put(
+                        f"SBF  –  {waste_name}  {key[:-2]} m³ (no soil)"
+                    )
 
     with ThreadPoolExecutor(max_workers=3) as ex:
         futures = [
