@@ -517,74 +517,103 @@ def update_multiple_rates(username: str, password: str,
                           rates_url: str = None,
                           login_delay: float = 5.0,
                           edit_delay: float = 3.0,
-                          start_date: str = None):
+                          start_date: str = None,
+                          waste_type: str = None):
     """
     Log in ONCE then update multiple rows sequentially.
-    Returns (success, message, screenshot_bytes_or_None).
+    Returns (success, message, screenshots_list).
+    screenshots_list is a list of PNG bytes, one per navigation step.
     """
     import time
+    import re as _re
     if rates_url is None:
         rates_url = WASTE_TYPE_RATES_URLS.get("General Waste", _SUPPLIER_LOGIN_URL)
 
+    # Derive waste_type label from cat_id in rates_url if not supplied
+    if waste_type is None:
+        _m = _re.search(r"cat_id=(\d+)", rates_url)
+        if _m:
+            _cat = _m.group(1)
+            waste_type = next((k for k, v in WASTE_TYPE_IDS.items() if v == _cat), None)
+
+    _BASE_WS = "https://order.skipbinsonline.com.au/order/supplier/waste_schedules.php"
+
     driver = _make_screenshot_driver()
     results = []
-    screenshot = None
+    screenshots = []
+
+    def _snap():
+        try:
+            screenshots.append(driver.get_screenshot_as_png())
+        except Exception:
+            pass
+
+    def _click_btn(label):
+        """Click an input[type=button] or button whose value/text contains label (case-insensitive)."""
+        lo = label.lower()
+        xpath = (
+            f"//input[@type='button' and contains("
+            f"translate(@value,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'{lo}')]"
+            f" | //button[contains("
+            f"translate(normalize-space(text()),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'{lo}')]"
+            f" | //a[contains("
+            f"translate(normalize-space(text()),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'{lo}')]"
+        )
+        from selenium.webdriver.common.by import By
+        els = driver.find_elements(By.XPATH, xpath)
+        for el in els:
+            if el.is_displayed():
+                driver.execute_script("arguments[0].click();", el)
+                return True
+        return False
+
     try:
         ok, msg = _do_login(driver, username, password, login_delay)
         if not ok:
-            try:
-                screenshot = driver.get_screenshot_as_png()
-            except Exception:
-                pass
-            return False, msg, screenshot
+            _snap()
+            return False, msg, screenshots
 
-        # Step 1: Click the Marrel bin type to establish session state — without
-        # this the server returns the bare availability grid with no waste type
-        # tabs and no price table, regardless of the URL parameters used.
-        _BASE_WS = "https://order.skipbinsonline.com.au/order/supplier/waste_schedules.php"
+        # ── Step 1: Go to base Waste Schedules page ──────────────────────────
         driver.get(_BASE_WS)
+        import time
         time.sleep(2)
-        try:
-            marrel_btn = driver.find_element(
-                By.XPATH,
-                "//input[@type='button' and contains(translate(@value,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'marrel')]"
-                " | //button[contains(translate(text(),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'marrel')]"
-            )
-            driver.execute_script("arguments[0].click();", marrel_btn)
-            time.sleep(2)
-        except Exception:
-            pass  # Marrel already selected or page structure differs
+        _snap()   # screenshot 0: base page (should show Marrel button)
 
-        # Step 2: Navigate to the price-table view (&save=true) — required to load the
-        # price-editing interface; without it only the availability grid is shown.
+        # ── Step 2: Click Marrel ──────────────────────────────────────────────
+        _click_btn("marrel")
+        time.sleep(2)
+        _snap()   # screenshot 1: after clicking Marrel (should show waste-type tabs)
+
+        # ── Step 3: Click the correct waste type tab ──────────────────────────
+        if waste_type:
+            _click_btn(waste_type)
+            time.sleep(2)
+        _snap()   # screenshot 2: after clicking waste type (should show price table)
+
+        # ── Step 4: Navigate to &save=true to confirm price-table view ────────
         date_part = f"&startDate={start_date}" if start_date else ""
         save_url = rates_url + date_part + "&save=true"
         driver.get(save_url)
         time.sleep(3)
-        try:
-            screenshot = driver.get_screenshot_as_png()
-        except Exception:
-            pass
+        _snap()   # screenshot 3: price table full view
 
+        # ── Step 5: Edit each size ─────────────────────────────────────────────
         for size_str, new_price in updates:
             ok, msg = _update_single_row(driver, size_str, new_price, rates_url, edit_delay,
                                          start_date=start_date)
             if ok:
                 results.append(msg)
             else:
-                results.append(f"{size_str} m³: ❌ {msg}")
+                results.append(f"{size_str} m\u00b3: \u274c {msg}")
 
-        all_ok = all("❌" not in r for r in results)
+        all_ok = all("\u274c" not in r for r in results)
         summary = "  |  ".join(results)
-        return all_ok, summary, screenshot
+        return all_ok, summary, screenshots
 
     except Exception as exc:
         summary = ("  |  ".join(results) + f"  |  ERROR: {exc}").lstrip("  |  ")
-        try:
-            screenshot = driver.get_screenshot_as_png()
-        except Exception:
-            pass
-        return False, summary, screenshot
+        _snap()
+        return False, summary, screenshots
     finally:
         try:
             driver.quit()
@@ -600,11 +629,11 @@ def update_waste_type_rates(username: str, password: str,
                             start_date: str = None):
     """
     Log in and update prices for a specific waste type.
-    Returns (success, message, screenshot_bytes_or_None).
+    Returns (success, message, screenshots_list).
     """
     rates_url = WASTE_TYPE_RATES_URLS.get(waste_type)
     if not rates_url:
-        return False, f"No rates URL configured for waste type: {waste_type}", None
+        return False, f"No rates URL configured for waste type: {waste_type}", []
 
     return update_multiple_rates(
         username, password,
@@ -613,4 +642,5 @@ def update_waste_type_rates(username: str, password: str,
         login_delay=login_delay,
         edit_delay=edit_delay,
         start_date=start_date,
+        waste_type=waste_type,
     )
