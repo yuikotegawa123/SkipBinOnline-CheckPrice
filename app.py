@@ -1955,12 +1955,8 @@ elif page == "SkipBinsOnline":
                     if _err_items:
                         st.error("**Failed:**\n" + "\n".join(f"- {r['msg']}" for r in _err_items))
                     for _rr in _sbo_last_run:
-                        _step_labels = ["Base page", "After Marrel", "After waste type", "Price table"]
                         for _si, _shot in enumerate(_rr.get("screenshots") or []):
-                            _cap = (_step_labels[_si] if _si < len(_step_labels)
-                                    else f"Edit step {_si - len(_step_labels) + 1}")
-                            _cap += f" — {_rr['msg'][:50]}"
-                            st.image(_shot, caption=_cap, width='stretch')
+                            st.image(_shot, caption=f"Final result — {_rr['msg'][:60]}", width='stretch')
                     if st.button("✖ Clear results", key="sbo_clear_results"):
                         st.session_state["sbo_last_run_summary"] = []
                         st.rerun()
@@ -2244,7 +2240,5 @@ elif page == "SkipBinsOnline":
                         st.success(f"✅ Done!  {_sbo_rmsg}")
                     else:
                         st.error(f"❌ {_sbo_rmsg}")
-                    _sbo_step_labels = ["Base page", "After Marrel", "After waste type", "Price table"]
-                    for _si, _shot in enumerate(_sbo_rshots or []):
-                        _cap = _sbo_step_labels[_si] if _si < len(_sbo_step_labels) else f"Step {_si+1}"
-                        st.image(_shot, caption=_cap, width='stretch')
+                    for _shot in (_sbo_rshots or []):
+                        st.image(_shot, caption="Final result", width='stretch')

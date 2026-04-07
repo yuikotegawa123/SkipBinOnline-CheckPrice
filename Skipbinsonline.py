@@ -624,36 +624,35 @@ def update_multiple_rates(username: str, password: str,
         driver.get(_BASE_WS)
         import time
         time.sleep(2)
-        _snap()   # screenshot 0: base page (should show Marrel button)
 
         # ── Step 2: Click Marrel ──────────────────────────────────────────────
         _click_btn("marrel")
         time.sleep(2)
-        _snap()   # screenshot 1: after clicking Marrel (should show waste-type tabs)
 
         # ── Step 3: Click the correct waste type tab ──────────────────────────
         if waste_type:
             _click_btn(waste_type)
             time.sleep(2)
-        _snap()   # screenshot 2: after clicking waste type (should show price table)
 
         # ── Step 4: Navigate to &save=true to confirm price-table view ────────
         date_part = f"&startDate={start_date}" if start_date else ""
         save_url = rates_url + date_part + "&save=true"
         driver.get(save_url)
         time.sleep(3)
-        _snap()   # screenshot 3: price table full view
 
         # ── Step 5: Edit each size ─────────────────────────────────────────────
         for size_str, new_price in updates:
-            ok, msg, edit_shot = _update_single_row(driver, size_str, new_price, rates_url,
-                                                    edit_delay, start_date=start_date)
-            if edit_shot:
-                screenshots.append(edit_shot)
+            ok, msg, _edit_shot = _update_single_row(driver, size_str, new_price, rates_url,
+                                                     edit_delay, start_date=start_date)
             if ok:
                 results.append(msg)
             else:
                 results.append(f"{size_str} m³: ❌ {msg}")
+
+        # ── Final screenshot after all edits ──────────────────────────────────
+        driver.get(save_url)
+        time.sleep(3)
+        _snap()
 
         all_ok = all("\u274c" not in r for r in results)
         summary = "  |  ".join(results)
