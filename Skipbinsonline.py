@@ -429,30 +429,45 @@ def _update_single_row(driver, size: str, new_price: str, rates_url: str, edit_d
     driver.get(edit_url)
     time.sleep(edit_delay)
 
-    price_row_inputs = driver.find_elements(
-        By.XPATH,
-        "//td[normalize-space(text())='Price:']/ancestor::tr[1]//input[@type='text']"
+    # Broad selector: any text/number input that is editable and visible
+    all_inputs = driver.find_elements(
+        By.CSS_SELECTOR,
+        "input[type='text'], input[type='number'], input:not([type])"
     )
-    visible_inputs = [inp for inp in price_row_inputs if inp.is_displayed()]
+    visible_inputs = [
+        inp for inp in all_inputs
+        if inp.is_displayed() and inp.is_enabled()
+        and inp.get_attribute("readonly") is None
+    ]
 
     if not visible_inputs:
-        table_inputs = driver.find_elements(By.CSS_SELECTOR, "table input[type='text']")
-        visible_inputs = [inp for inp in table_inputs if inp.is_displayed()]
-
-    if not visible_inputs:
-        return False, f"{size} m\u00b3: could not find price inputs on edit form."
+        # Diagnostic: report all inputs found on the page regardless of type
+        all_page_inputs = driver.find_elements(By.TAG_NAME, "input")
+        diag = "; ".join(
+            f"type={el.get_attribute('type')!r} name={el.get_attribute('name')!r} "
+            f"id={el.get_attribute('id')!r} visible={el.is_displayed()}"
+            for el in all_page_inputs[:20]
+        ) or "none"
+        page_url = driver.current_url
+        return False, (
+            f"{size} m³: could not find price inputs on edit form. "
+            f"URL={page_url} | inputs on page: [{diag}]"
+        )
 
     for inp in visible_inputs:
-        inp.click()
-        inp.send_keys(Keys.CONTROL + "a")
-        inp.send_keys(new_price)
+        try:
+            driver.execute_script("arguments[0].value = '';", inp)
+            inp.click()
+            inp.send_keys(new_price)
+        except Exception:
+            pass
 
     confirm_btn = None
     for by, sel in [
         (By.CSS_SELECTOR, "input[type='image']"),
         (By.CSS_SELECTOR, "input[type='submit']"),
         (By.XPATH, "//button[@type='submit']"),
-        (By.XPATH, "//button[contains(translate(text(),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'save') or contains(translate(text(),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'update') or contains(translate(text(),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'confirm')]"),
+        (By.XPATH, "//button"),
     ]:
         els = driver.find_elements(by, sel)
         for el in els:
@@ -463,11 +478,11 @@ def _update_single_row(driver, size: str, new_price: str, rates_url: str, edit_d
             break
 
     if confirm_btn is None:
-        return False, f"{size} m\u00b3: could not find confirm button on edit form."
+        return False, f"{size} m³: could not find confirm button on edit form."
 
     driver.execute_script("arguments[0].click();", confirm_btn)
     time.sleep(2)
-    return True, f"{size} m\u00b3 \u2192 ${new_price} \u2713"
+    return True, f"{size} m³ → ${new_price} ✓"
 
 
 def update_multiple_rates(username: str, password: str,
