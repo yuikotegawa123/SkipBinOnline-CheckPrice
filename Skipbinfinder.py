@@ -176,20 +176,20 @@ def _parse_step4_prices(driver):
             continue
         size = m.group(1)
 
-        # Check the 3 lines preceding this size line for special labels
+        # Check the 3 lines PRECEDING this size line for "Trailer Bin"
         preceding = lines[max(0, i - 3): i]
         if any(re.search(r'trailer\s*bin', p, re.IGNORECASE) for p in preceding):
             continue
 
-        # Detect "Soil not accepted in this bin" → store under size + "ns" key
-        no_soil = any(re.search(r'soil\s+not\s+accepted', p, re.IGNORECASE) for p in preceding)
-        key = size + 'ns' if no_soil else size
-
-        # Scan forward for "Best Price" then "$XXX"
+        # Scan forward up to 15 lines to find the Best Price AND detect labels
+        # that appear BETWEEN the size line and the price (e.g. "Soil not accepted in this bin")
         best_price = None
+        no_soil    = False
         for j in range(i + 1, min(i + 15, len(lines))):
+            if re.search(r'soil\s+not\s+accepted', lines[j], re.IGNORECASE):
+                no_soil = True
+
             if price_re.match(lines[j]):
-                # price on same line ("Best Price $XXX") or next line
                 inline = re.search(r'\$([0-9,]+(?:\.\d+)?)', lines[j])
                 if inline:
                     best_price = float(inline.group(1).replace(',', ''))
@@ -198,13 +198,14 @@ def _parse_step4_prices(driver):
                     if dm:
                         best_price = float(dm.group(1).replace(',', ''))
                 break
-            # also handles "Best Price $XXX" on a single line
             combined = re.match(
                 r'Best\s+Price\s+\$([0-9,]+(?:\.\d+)?)', lines[j], re.IGNORECASE
             )
             if combined:
                 best_price = float(combined.group(1).replace(',', ''))
                 break
+
+        key = size + 'ns' if no_soil else size
 
         if best_price is not None:
             if key not in prices or best_price < prices[key]:
