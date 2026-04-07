@@ -158,6 +158,9 @@ def _parse_step4_prices(driver):
     Parse the step-4 bin-size listing and return a dict: {size_str -> min_price}.
     'Trailer Bin' entries are skipped entirely.
     'Soil not accepted in this bin' entries are stored under 'Xns' key.
+
+    Each bin card spans from its size line up to (but not including) the next
+    size line, so labels from one card never bleed into an adjacent card.
     """
     from selenium.webdriver.common.by import By
     body_text = driver.find_element(By.TAG_NAME, "body").text
@@ -167,52 +170,43 @@ def _parse_step4_prices(driver):
     price_re  = re.compile(r'^Best\s+Price$', re.IGNORECASE)
     dollar_re = re.compile(r'^\$([0-9,]+(?:\.\d+)?)$')
 
-    # Pre-map every line index that contains a special label so we can check
-    # any window regardless of whether the label comes before or after the price.
-    trailer_lines  = set()
-    no_soil_lines  = set()
+    # Collect all size-line indices first so we can define per-card boundaries
+    size_positions = []
     for idx, ln in enumerate(lines):
-        if re.search(r'trailer\s*bin', ln, re.IGNORECASE):
-            trailer_lines.add(idx)
-        if re.search(r'soil\s+not\s+accepted', ln, re.IGNORECASE):
-            no_soil_lines.add(idx)
+        if size_re.match(ln):
+            size_positions.append(idx)
 
     prices = {}
-    WINDOW = 18   # lines to scan either side of the size line
 
-    for i, line in enumerate(lines):
-        m = size_re.match(line)
-        if not m:
-            continue
-        size = m.group(1)
+    for pos_i, i in enumerate(size_positions):
+        size = size_re.match(lines[i]).group(1)
 
-        # Window around this size line
-        win_start = max(0, i - 4)
-        win_end   = min(len(lines), i + WINDOW)
-        window    = range(win_start, win_end)
+        # Card ends just before the next size line (or at most 20 lines ahead)
+        next_size = size_positions[pos_i + 1] if pos_i + 1 < len(size_positions) else len(lines)
+        card_end  = min(next_size, i + 20)
 
-        # Skip Trailer Bin entries
-        if any(j in trailer_lines for j in window):
+        card_lines = lines[i:card_end]
+
+        # Skip Trailer Bin cards
+        if any(re.search(r'trailer\s*bin', ln, re.IGNORECASE) for ln in card_lines):
             continue
 
-        # Detect no-soil label anywhere in the window (before OR after size line)
-        no_soil = any(j in no_soil_lines for j in window)
+        # Detect no-soil label anywhere within this card
+        no_soil = any(re.search(r'soil\s+not\s+accepted', ln, re.IGNORECASE) for ln in card_lines)
 
-        # Scan FORWARD for Best Price
+        # Find Best Price within this card
         best_price = None
-        for j in range(i + 1, win_end):
-            if price_re.match(lines[j]):
-                inline = re.search(r'\$([0-9,]+(?:\.\d+)?)', lines[j])
+        for j, ln in enumerate(card_lines[1:], start=1):
+            if price_re.match(ln):
+                inline = re.search(r'\$([0-9,]+(?:\.\d+)?)', ln)
                 if inline:
                     best_price = float(inline.group(1).replace(',', ''))
-                elif j + 1 < len(lines):
-                    dm = dollar_re.match(lines[j + 1])
+                elif j + 1 < len(card_lines):
+                    dm = dollar_re.match(card_lines[j + 1])
                     if dm:
                         best_price = float(dm.group(1).replace(',', ''))
                 break
-            combined = re.match(
-                r'Best\s+Price\s+\$([0-9,]+(?:\.\d+)?)', lines[j], re.IGNORECASE
-            )
+            combined = re.match(r'Best\s+Price\s+\$([0-9,]+(?:\.\d+)?)', ln, re.IGNORECASE)
             if combined:
                 best_price = float(combined.group(1).replace(',', ''))
                 break
