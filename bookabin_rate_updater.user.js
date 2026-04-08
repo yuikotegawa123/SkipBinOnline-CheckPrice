@@ -26,6 +26,15 @@
         return /rates_manage/i.test(decodeURIComponent(window.location.href));
     }
 
+    function currentPageMatchesGroup(group) {
+        var url = group.url || (WASTE_URLS[group.wasteType] ? WASTE_URLS[group.wasteType] : null);
+        if (!url) return true; // no URL to check — assume correct
+        // Compare path only (ignore query string)
+        var currentPath = window.location.pathname.toLowerCase();
+        var targetPath  = url.replace(/^https?:\/\/[^/]+/i, '').replace(/\?.*$/, '').toLowerCase();
+        return currentPath === targetPath;
+    }
+
     function wait(ms) { return new Promise(function(r){ setTimeout(r, ms); }); }
 
     function waitFor(fn, ms) {
@@ -260,6 +269,22 @@
         if (runBtn)  runBtn.disabled  = true;
         if (stopBtn) stopBtn.disabled = false;
 
+        var groups = st.groups;
+        var gi     = st.groupIdx || 0;
+        var group  = groups[gi];
+
+        // Navigate to correct URL if not already there
+        if (!currentPageMatchesGroup(group)) {
+            var targetUrl = group.url || (WASTE_URLS[group.wasteType] ? WASTE_URLS[group.wasteType] : null);
+            if (targetUrl) {
+                log('Navigating to ' + group.wasteType + '...', '#89b4fa');
+                saveState(st);
+                await wait(400);
+                window.location.href = targetUrl;
+                return;
+            }
+        }
+
         // Wait for table to load
         try { await waitForRows(); } catch(e) { log('Table load timed out.', '#f38ba8'); }
 
@@ -435,9 +460,20 @@
     // ── Init ──────────────────────────────────────────────────────────────────
 
     function init() {
-        if (!isRatesPage()) return;
         console.log('[RateUpdater] init');
         var state = loadState();
+        // If resuming, only run on rates pages; otherwise show input panel on any bookabin page
+        if (state && !isRatesPage()) {
+            // Navigate to the correct rates page for the current group
+            var gi = state.groupIdx || 0;
+            var group = state.groups && state.groups[gi];
+            var targetUrl = group && (group.url || (WASTE_URLS[group.wasteType] ? WASTE_URLS[group.wasteType] : null));
+            if (targetUrl) {
+                buildPanel(state);
+                setTimeout(function() { window.location.href = targetUrl; }, 600);
+                return;
+            }
+        }
         buildPanel(state || null);
     }
 

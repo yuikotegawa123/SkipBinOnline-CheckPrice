@@ -1551,7 +1551,7 @@ elif page == "SkipBinFinder":
 
             # --- Full data tables ---
             st.subheader("📋 All Available Sizes")
-            _sbf_lt75_sizes = [s for s in SBF.ALL_SIZES if float(s[:-2] if s.endswith('ns') else s) <= 7.5]
+            _sbf_lt75_sizes = [s for s in SBF.ALL_SIZES if (lambda v: v < 7.5 or (v == 7.5 and not s.endswith('ns')))(float(s[:-2] if s.endswith('ns') else s))]
             st.dataframe(
                 _to_df(sbf_results, SBF.WASTE_TYPES, _sbf_lt75_sizes),
                 width='stretch',
@@ -1588,7 +1588,7 @@ elif page == "SkipBinFinder":
             if _sbf_price_map:
                 _sbf_update_wts = [wt for wt in SBF.WASTE_TYPES if any(k[0] == wt for k in _sbf_price_map)]
                 # Include both regular and ns sizes that actually have data, ordered by ALL_SIZES, exclude >= 7.5
-                _sbf_update_szs = [sz for sz in SBF.ALL_SIZES if float(sz[:-2] if sz.endswith('ns') else sz) <= 7.5 and any(k[1] == sz for k in _sbf_price_map)]
+                _sbf_update_szs = [sz for sz in SBF.ALL_SIZES if (lambda v: v < 7.5 or (v == 7.5 and not sz.endswith('ns')))(float(sz[:-2] if sz.endswith('ns') else sz)) and any(k[1] == sz for k in _sbf_price_map)]
                 _sbf_preview_rows = []
                 for _wt in _sbf_update_wts:
                     _row = {"Waste Type": _wt}
