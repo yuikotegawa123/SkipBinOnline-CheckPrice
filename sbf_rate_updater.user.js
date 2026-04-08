@@ -70,34 +70,55 @@
         }, 15000);
     }
 
-    // Find an edit button/link in a row — SBF uses anchor tags or input buttons
+    // Find the edit icon/button in a row (pencil icon, edit link, image button)
     function findEditBtn(row) {
+        // Prefer image buttons or anchors with edit-related src/alt/title/text
         return row.querySelector(
-            'a[href*="edit" i], a[title*="edit" i], a[onclick*="edit" i], ' +
+            'img[src*="edit" i], img[alt*="edit" i], ' +
+            'a > img[src*="edit" i], a > img[alt*="edit" i], ' +
+            'input[type="image"][src*="edit" i], input[type="image"][alt*="edit" i], ' +
+            'a[title*="edit" i], a[href*="edit" i], a[onclick*="edit" i], ' +
             'button[title*="edit" i], button[onclick*="edit" i], ' +
-            'input[type="button"][value*="edit" i], input[type="submit"][value*="edit" i], ' +
-            'input[type="image"][alt*="edit" i], input[type="image"][src*="edit" i]'
-        );
+            'input[type="button"][value*="edit" i], input[type="submit"][value*="edit" i]'
+        ) || (function() {
+            // Fallback: anchor/button whose trimmed text is just a pencil symbol or "Edit"
+            var all = row.querySelectorAll('a, button');
+            for (var i = 0; i < all.length; i++) {
+                var t = all[i].textContent.trim();
+                if (/^(edit|✏|🖊|✎)$/i.test(t)) return all[i];
+            }
+            return null;
+        })();
     }
 
-    // Find save/update button in a row
+    // Find the save icon/button in a row after entering edit mode
     function findSaveBtn(row) {
         return row.querySelector(
-            'a[href*="save" i], a[title*="save" i], a[onclick*="save" i], ' +
-            'a[href*="update" i], a[title*="update" i], ' +
+            'img[src*="save" i], img[alt*="save" i], img[src*="tick" i], img[alt*="tick" i], ' +
+            'img[src*="ok" i], img[alt*="ok" i], img[src*="check" i], img[alt*="check" i], ' +
+            'input[type="image"][src*="save" i], input[type="image"][alt*="save" i], ' +
+            'a[title*="save" i], a[onclick*="save" i], a[title*="update" i], ' +
             'button[title*="save" i], button[title*="update" i], ' +
             'input[type="button"][value*="save" i], input[type="submit"][value*="save" i], ' +
-            'input[type="button"][value*="update" i], input[type="submit"][value*="update" i], ' +
-            'input[type="image"][alt*="save" i], input[type="image"][alt*="update" i]'
-        );
+            'input[type="button"][value*="update" i], input[type="submit"][value*="update" i]'
+        ) || (function() {
+            var all = row.querySelectorAll('a, button');
+            for (var i = 0; i < all.length; i++) {
+                var t = all[i].textContent.trim();
+                if (/^(save|update|✓|✔|💾)$/i.test(t)) return all[i];
+            }
+            return null;
+        })();
     }
 
-    // Find a save/update button anywhere on the page (e.g. in an edit form outside the row)
+    // Find a save/update button anywhere on the page (e.g. in a modal/edit form)
     function findSaveBtnPage() {
         return document.querySelector(
+            'input[type="image"][src*="save" i], input[type="image"][alt*="save" i], ' +
+            'input[type="image"][src*="tick" i], input[type="image"][alt*="tick" i], ' +
             'input[type="submit"][name*="save" i], input[type="submit"][value*="save" i], ' +
             'input[type="submit"][name*="update" i], input[type="submit"][value*="update" i], ' +
-            'button[type="submit"][value*="save" i], button[type="submit"][value*="update" i], ' +
+            'button[type="submit"][name*="save" i], button[type="submit"][value*="save" i], ' +
             'input[type="button"][value*="save" i], input[type="button"][value*="update" i]'
         );
     }
@@ -107,8 +128,28 @@
         return context.querySelector(
             'input[name*="price" i], input[id*="price" i], ' +
             'input[name*="rate" i], input[id*="rate" i], ' +
-            'input[type="text"][name*="cost" i], input[type="number"]'
-        ) || context.querySelector('input[type="text"]');
+            'input[type="text"][name*="cost" i], input[type="number"][name*="price" i], ' +
+            'input[type="number"][name*="rate" i]'
+        ) || context.querySelector('input[type="number"], input[type="text"]');
+    }
+
+    // Find a stock/quantity input in an edit row or form
+    function findStockInput(context, skipEl) {
+        var candidates = context.querySelectorAll(
+            'input[name*="stock" i], input[id*="stock" i], ' +
+            'input[name*="qty" i], input[id*="qty" i], ' +
+            'input[name*="quantity" i], input[id*="quantity" i], ' +
+            'input[name*="avail" i], input[id*="avail" i]'
+        );
+        for (var i = 0; i < candidates.length; i++) {
+            if (candidates[i] !== skipEl) return candidates[i];
+        }
+        // Fallback: second text/number input that isn't the price input
+        var all = context.querySelectorAll('input[type="text"], input[type="number"]');
+        for (var j = 0; j < all.length; j++) {
+            if (all[j] !== skipEl) return all[j];
+        }
+        return null;
     }
 
     // Find the row for a given size
@@ -193,6 +234,21 @@
 
     // ── Update one group's items ──────────────────────────────────────────────
 
+    function getDefaultStock() {
+        var el = document.getElementById('sbf-stock');
+        var v = el ? parseInt(el.value, 10) : NaN;
+        return isNaN(v) ? null : v;
+    }
+
+    function fillInput(inp, val) {
+        var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        inp.focus();
+        inp.select();
+        setter.call(inp, String(val));
+        inp.dispatchEvent(new Event('input',  { bubbles: true }));
+        inp.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
     async function updateGroupItems(items, startIdx) {
         var done = 0;
         for (var i = (startIdx || 0); i < items.length; i++) {
@@ -204,50 +260,72 @@
 
             var editBtn = findEditBtn(row);
             if (!editBtn) {
-                log('  ' + sz + 'm³: Edit button not found - skipping. Row: ' + row.innerText.substring(0, 100), '#f38ba8');
+                log('  ' + sz + 'm³: Edit icon not found - skipping. Row: ' + row.innerText.substring(0, 100), '#f38ba8');
                 continue;
             }
 
             log('  ' + sz + 'm³ -> $' + price);
             editBtn.scrollIntoView({ block: 'center', behavior: 'smooth' });
             await wait(400);
-            editBtn.click();
+            // If edit btn is an img inside an anchor, click the anchor
+            var clickTarget = editBtn;
+            if (editBtn.tagName === 'IMG' && editBtn.parentElement && editBtn.parentElement.tagName === 'A') {
+                clickTarget = editBtn.parentElement;
+            }
+            clickTarget.click();
             await wait(800);
 
-            // Find the save button — first check if page navigated to an edit form
-            var saveBtn = findSaveBtnPage();
+            // After clicking edit, look for save icon in the same row first
+            var editRow = row;
+            var saveBtn = findSaveBtn(editRow);
             if (!saveBtn) {
-                // Try waiting for it to appear (inline edit)
+                // Inline edit may expand a sibling row — check next 2 rows in DOM
+                var trs = getAllTableRows();
+                var rowIdx = trs.indexOf(editRow);
+                for (var ri = rowIdx + 1; ri <= rowIdx + 2 && ri < trs.length; ri++) {
+                    saveBtn = findSaveBtn(trs[ri]);
+                    if (saveBtn) { editRow = trs[ri]; break; }
+                }
+            }
+            if (!saveBtn) {
+                // Fall back to page-wide search (modal / separate form)
                 try {
                     saveBtn = await waitFor(function() { return findSaveBtnPage() || null; }, 6000);
                 } catch(e) {
-                    log('  ' + sz + 'm³: timed out waiting for save button - skipping.', '#f38ba8');
+                    log('  ' + sz + 'm³: timed out waiting for save icon - skipping.', '#f38ba8');
                     continue;
                 }
             }
 
-            // Find price input — check the save button's form, then whole page
-            var priceInput = null;
-            var form = saveBtn.closest ? saveBtn.closest('form') : null;
-            if (form) priceInput = findPriceInput(form);
+            // Find price input — prefer edit row context, then save button's form, then page
+            var ctx = saveBtn.closest ? (saveBtn.closest('tr') || saveBtn.closest('form') || document) : document;
+            var priceInput = findPriceInput(ctx);
             if (!priceInput) priceInput = findPriceInput(document);
 
             if (!priceInput) {
                 log('  ' + sz + 'm³: price input not found - skipping.', '#f38ba8');
                 var cancelBtn = document.querySelector(
+                    'input[type="image"][src*="cancel" i], input[type="image"][alt*="cancel" i], ' +
                     'a[href*="cancel" i], a[onclick*="cancel" i], input[value*="cancel" i], button[value*="cancel" i]'
                 );
                 if (cancelBtn) cancelBtn.click();
                 continue;
             }
 
-            var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-            priceInput.focus();
-            priceInput.select();
-            setter.call(priceInput, String(price));
-            priceInput.dispatchEvent(new Event('input',  { bubbles: true }));
-            priceInput.dispatchEvent(new Event('change', { bubbles: true }));
-            await wait(300);
+            fillInput(priceInput, price);
+            await wait(200);
+
+            // Fill stock input if a default stock value is set
+            var stockVal = getDefaultStock();
+            if (stockVal !== null) {
+                var stockInput = findStockInput(ctx, priceInput);
+                if (!stockInput) stockInput = findStockInput(document, priceInput);
+                if (stockInput) {
+                    fillInput(stockInput, stockVal);
+                    log('    stock -> ' + stockVal, '#a6adc8');
+                    await wait(200);
+                }
+            }
 
             // Save progress before clicking save (page may reload)
             try {
@@ -256,9 +334,14 @@
             } catch(e) {}
 
             saveBtn.scrollIntoView({ block: 'center' });
-            saveBtn.click();
+            // If save btn is an img inside an anchor, click the anchor
+            var saveClickTarget = saveBtn;
+            if (saveBtn.tagName === 'IMG' && saveBtn.parentElement && saveBtn.parentElement.tagName === 'A') {
+                saveClickTarget = saveBtn.parentElement;
+            }
+            saveClickTarget.click();
 
-            // Wait for page to settle (edit form disappears or rows reload)
+            // Wait for page to settle (save icon disappears / rows reload)
             try {
                 await waitFor(function() {
                     return !findSaveBtnPage() ? true : null;
@@ -268,7 +351,7 @@
             try { await waitForRows(); } catch(e) { await wait(2000); }
             await wait(600);
             done++;
-            log('    Saved', '#a6e3a1');
+            log('    Saved ✓', '#a6e3a1');
         }
         return done;
     }
@@ -380,6 +463,17 @@
                 preview.style.color = '#a6e3a1';
                 preview.textContent = total + ' price(s) across ' + groups.length + ' waste type(s) ready.';
             });
+
+            // Default stock input
+            var stockRow = document.createElement('div');
+            stockRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:11px;color:#a6adc8;';
+            var stockLbl = document.createElement('label'); stockLbl.textContent = 'Default Stock:';
+            stockLbl.style.cssText = 'white-space:nowrap;';
+            var stockInp = document.createElement('input'); stockInp.id = 'sbf-stock'; stockInp.type = 'number';
+            stockInp.min = '0'; stockInp.placeholder = '(leave blank to skip)';
+            stockInp.style.cssText = 'flex:1;background:#181825;color:#cdd6f4;border:1px solid #585b70;border-radius:4px;padding:4px 6px;font-size:11px;';
+            stockRow.appendChild(stockLbl); stockRow.appendChild(stockInp);
+            body.appendChild(stockRow);
         }
 
         var btnRow = document.createElement('div'); btnRow.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;';
