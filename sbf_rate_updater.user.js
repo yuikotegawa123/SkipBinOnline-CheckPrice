@@ -170,34 +170,7 @@
     }
 
 
-        var numStr = sz.toString().replace(/\s*m(?:3|³|etres?)?.*$/i, '').trim();
-        var szPat = new RegExp('(?<![\\d.])' + numStr.replace('.', '\\.') + '(?![\\d.])', 'i');
-        var rows = getAllTableRows();
 
-        if (rows.length === 0) {
-            log('  [debug] No table rows found on page!', '#fab387');
-            return null;
-        }
-
-        for (var i = 0; i < rows.length; i++) {
-            var txt = rows[i].innerText.replace(/\s+/g, ' ').trim();
-            if (!szPat.test(txt)) continue;
-            // Avoid header rows — must have an edit control or price-like content
-            var limit = Math.min(rows.length - 1, i + 3);
-            for (var j = i; j <= limit; j++) {
-                var btn = findEditBtn(rows[j]);
-                if (btn) return rows[j];
-            }
-            // Return matching row for caller even if no edit btn found yet
-            return rows[i];
-        }
-
-        var sample = rows.slice(0, Math.min(5, rows.length)).map(function(r) {
-            return '"' + r.innerText.replace(/\s+/g, ' ').trim().substring(0, 80) + '"';
-        }).join(' | ');
-        log('  [debug] sz=' + sz + ' not found. Sample rows: ' + sample, '#fab387');
-        return null;
-    }
 
     // ── JSON Parser ───────────────────────────────────────────────────────────
 
