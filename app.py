@@ -1582,23 +1582,11 @@ elif page == "SkipBinFinder":
             # ---------------------------------------------------------------
             st.subheader("💲 Update Price")
 
-            _SBF_MINUS1_WTS = {'General Waste', 'Green Garden Waste'}
-            _SBF_EXTRA_SZFS = {15.0, 16.0, 20.0, 30.0}
-
             _sbf_price_map = {}
             for _wt, _sizes in sbf_results.items():
                 for _sz, _pr in _sizes.items():
                     if isinstance(_pr, (int, float)):
-                        # Strip "ns" suffix to get numeric base for the -1 rule
-                        _base = _sz[:-2] if _sz.endswith('ns') else _sz
-                        try:
-                            _sz_f = float(_base)
-                        except (ValueError, TypeError):
-                            _sz_f = 0.0
-                        if _wt in _SBF_MINUS1_WTS and (_sz_f <= 12.0 or _sz_f in _SBF_EXTRA_SZFS):
-                            _adj = int(_pr) - 1
-                        else:
-                            _adj = int(_pr)
+                        _adj = int(_pr) - 1
                         _key = (_wt, _sz)
                         if _key not in _sbf_price_map or _adj < _sbf_price_map[_key]:
                             _sbf_price_map[_key] = _adj
