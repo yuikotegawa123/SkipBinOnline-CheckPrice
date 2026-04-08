@@ -337,22 +337,30 @@
     }
 
     async function updateAllGroupsOnPage(priceMap) {
-        // On the edit page all inputs are already rendered — no edit-icon click needed.
-        // All bin rows share ONE <form>, so we must fill every row FIRST, then submit once.
+        var rows = getAllTableRows();
+        log('  [debug] total rows on page: ' + rows.length, '#585b70');
+
+        // Dump ALL rows with input counts so we can diagnose
+        rows.forEach(function(r, ri) {
+            var txt = r.innerText.replace(/\s+/g, ' ').trim().substring(0, 80);
+            var allInp = r.querySelectorAll('input');
+            var editableInp = getEditableInputs(r);
+            var sz = extractSizeFromText(r.innerText);
+            log('  [debug] row[' + ri + '] sz=' + (sz||'?') + ' inputs=' + allInp.length + ' editable=' + editableInp.length + ' "' + txt + '"', '#585b70');
+            if (allInp.length) {
+                Array.prototype.forEach.call(allInp, function(inp) {
+                    log('    input type=' + inp.type + ' name=' + inp.name + ' readOnly=' + inp.readOnly + ' disabled=' + inp.disabled + ' val="' + inp.value + '"', '#313244');
+                });
+            }
+        });
+
         var groups = findBinGroups();
         if (!groups.length) {
             log('  No bin groups found on page!', '#f38ba8');
-            // Debug: dump first 8 rows so we can see what text they contain
-            var dbgRows = getAllTableRows();
-            log('  [debug] total rows=' + dbgRows.length, '#585b70');
-            dbgRows.slice(0, 8).forEach(function(r, ri) {
-                log('  [debug] row[' + ri + ']: "' + r.innerText.replace(/\s+/g, ' ').trim().substring(0, 100) + '"', '#585b70');
-            });
             return 0;
         }
-        log('  Bin groups found: ' + groups.length + ', priceMap keys: ' + JSON.stringify(Object.keys(priceMap || {})), '#a6adc8');
+        log('  Bin groups found: ' + groups.length + ', priceMap: ' + JSON.stringify(priceMap), '#a6adc8');
 
-        // ── Pass 1: fill all price + stock inputs (no save yet) ───────────────
         var done = 0;
         var firstSaveBtn = null;
         for (var j = 0; j < groups.length; j++) {
@@ -361,16 +369,17 @@
             var price = (priceMap && priceMap[g.size] !== undefined) ? priceMap[g.size] : undefined;
             var stock = getStockForSize(g.size);
 
+            log('  group[' + j + '] size=' + g.size + ' price=' + price + ' stock=' + stock + ' saveInput=' + (g.saveInput ? g.saveInput.outerHTML.substring(0,80) : 'null'), '#a6adc8');
+
             if (price === undefined && stock === null) {
                 log('  ' + g.size + 'm\u00b3: no price or stock rule — skipping.', '#a6adc8');
                 continue;
             }
 
-            log('  ' + g.size + 'm\u00b3' + (price !== undefined ? ' -> $' + price : '') + (stock !== null ? '  stock=' + stock : ''));
-
             // Fill price inputs
             if (price !== undefined && price !== null) {
                 var priceInputs = getEditableInputs(g.priceRow);
+                log('    priceRow editable inputs: ' + priceInputs.length, '#585b70');
                 priceInputs.forEach(function(inp) { fillInput(inp, price); });
                 log('    price: ' + priceInputs.length + ' cell(s) -> $' + price, '#a6adc8');
             }
@@ -378,13 +387,13 @@
             // Fill stock inputs
             if (stock !== null && g.stockRow) {
                 var stockInputs = getEditableInputs(g.stockRow);
+                log('    stockRow editable inputs: ' + stockInputs.length, '#585b70');
                 stockInputs.forEach(function(inp) { fillInput(inp, stock); });
                 log('    stock: ' + stockInputs.length + ' cell(s) -> ' + stock, '#a6adc8');
             } else if (stock !== null) {
                 log('    stock row not found', '#fab387');
             }
 
-            // Collect first save button found (used for final submit)
             if (!firstSaveBtn) {
                 var saveCandidate = g.saveInput;
                 if (!saveCandidate) {
@@ -400,19 +409,17 @@
 
         if (!done) return 0;
 
-        // ── Pass 2: submit once (all rows share the same form) ────────────────
-        // Try the first per-row save button, or fall back to any submit on the page
         var saveBtn = firstSaveBtn
-            || document.querySelector('input[type="submit"], input[type="image"][src*="save" i], button[type="submit"]');
+            || document.querySelector('input[type="submit"], button[type="submit"]');
         if (!saveBtn) {
             log('  save button not found — cannot submit', '#f38ba8');
             return 0;
         }
-        log('  Submitting form...', '#a6adc8');
+        log('  Submitting: ' + saveBtn.outerHTML.substring(0, 120), '#a6adc8');
         saveBtn.scrollIntoView({ block: 'center' });
         saveBtn.click();
-        await wait(1000);
-        log('  Saved \u2713 (' + done + ' bin(s))', '#a6e3a1');
+        await wait(1200);
+        log('  Submitted \u2713 (' + done + ' bin(s))', '#a6e3a1');
         return done;
     }
 
@@ -600,7 +607,7 @@
         }
 
         var logDiv = document.createElement('div'); logDiv.id = 'sbf-log';
-        logDiv.style.cssText = 'max-height:160px;overflow-y:auto;background:#181825;border:1px solid #313244;border-radius:5px;padding:6px;font-size:11px;line-height:1.7;' + (resumeState ? '' : 'display:none;');
+        logDiv.style.cssText = 'max-height:300px;overflow-y:auto;background:#181825;border:1px solid #313244;border-radius:5px;padding:6px;font-size:10px;line-height:1.6;' + (resumeState ? '' : 'display:none;');
         body.appendChild(logDiv);
 
         if (resumeState && resumeState.logs) {
