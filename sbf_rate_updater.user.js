@@ -337,89 +337,104 @@
     }
 
     async function updateAllGroupsOnPage(priceMap) {
-        var rows = getAllTableRows();
-        log('  [debug] total rows on page: ' + rows.length, '#585b70');
-
-        // Dump ALL rows with input counts so we can diagnose
-        rows.forEach(function(r, ri) {
-            var txt = r.innerText.replace(/\s+/g, ' ').trim().substring(0, 80);
-            var allInp = r.querySelectorAll('input');
-            var editableInp = getEditableInputs(r);
-            var sz = extractSizeFromText(r.innerText);
-            log('  [debug] row[' + ri + '] sz=' + (sz||'?') + ' inputs=' + allInp.length + ' editable=' + editableInp.length + ' "' + txt + '"', '#585b70');
-            if (allInp.length) {
-                Array.prototype.forEach.call(allInp, function(inp) {
-                    log('    input type=' + inp.type + ' name=' + inp.name + ' readOnly=' + inp.readOnly + ' disabled=' + inp.disabled + ' val="' + inp.value + '"', '#313244');
-                });
-            }
-        });
-
         var groups = findBinGroups();
         if (!groups.length) {
             log('  No bin groups found on page!', '#f38ba8');
+            var dbgRows = getAllTableRows();
+            log('  [debug] total rows=' + dbgRows.length, '#585b70');
+            dbgRows.slice(0, 6).forEach(function(r, ri) {
+                log('  [debug] row[' + ri + ']: "' + r.innerText.replace(/\s+/g, ' ').trim().substring(0, 80) + '"', '#585b70');
+            });
             return 0;
         }
         log('  Bin groups found: ' + groups.length + ', priceMap: ' + JSON.stringify(priceMap), '#a6adc8');
 
         var done = 0;
-        var firstSaveBtn = null;
         for (var j = 0; j < groups.length; j++) {
             if (stopFlag) return done;
             var g     = groups[j];
             var price = (priceMap && priceMap[g.size] !== undefined) ? priceMap[g.size] : undefined;
             var stock = getStockForSize(g.size);
 
-            log('  group[' + j + '] size=' + g.size + ' price=' + price + ' stock=' + stock + ' saveInput=' + (g.saveInput ? g.saveInput.outerHTML.substring(0,80) : 'null'), '#a6adc8');
-
             if (price === undefined && stock === null) {
-                log('  ' + g.size + 'm\u00b3: no price or stock rule — skipping.', '#a6adc8');
+                log('  ' + g.size + 'm\u00b3: skip (no price/stock rule)', '#a6adc8');
                 continue;
             }
 
-            // Fill price inputs
+            log('  ' + g.size + 'm\u00b3 -> $' + price + (stock !== null ? ' stock=' + stock : '') +
+                ' editBtn=' + (g.editBtnEl ? g.editBtnEl.tagName + (g.editBtnEl.src || g.editBtnEl.href || '') : 'null'), '#a6adc8');
+
+            // ── 1. Click the per-row edit trigger to activate inline inputs ────
+            var editEl = g.editBtnEl;
+            if (!editEl) {
+                log('    no edit button found — skipping', '#f38ba8');
+                continue;
+            }
+            var editClick = (editEl.tagName === 'IMG' && editEl.parentElement && editEl.parentElement.tagName === 'A')
+                ? editEl.parentElement : editEl;
+            editClick.scrollIntoView({ block: 'center' });
+            await wait(200);
+            editClick.click();
+
+            // ── 2. Wait for price-row inputs to become editable ───────────────
+            var priceRow = g.priceRow;
+            try {
+                await waitFor(function() { return getEditableInputs(priceRow).length > 0 ? true : null; }, 5000);
+            } catch(e) {
+                log('    timeout waiting for inputs in row (got ' + getEditableInputs(priceRow).length + ')', '#f38ba8');
+                continue;
+            }
+
+            // ── 3. Fill price inputs ──────────────────────────────────────────
             if (price !== undefined && price !== null) {
-                var priceInputs = getEditableInputs(g.priceRow);
-                log('    priceRow editable inputs: ' + priceInputs.length, '#585b70');
+                var priceInputs = getEditableInputs(priceRow);
                 priceInputs.forEach(function(inp) { fillInput(inp, price); });
-                log('    price: ' + priceInputs.length + ' cell(s) -> $' + price, '#a6adc8');
+                log('    price: ' + priceInputs.length + ' input(s) -> $' + price, '#a6adc8');
             }
 
-            // Fill stock inputs
-            if (stock !== null && g.stockRow) {
-                var stockInputs = getEditableInputs(g.stockRow);
-                log('    stockRow editable inputs: ' + stockInputs.length, '#585b70');
-                stockInputs.forEach(function(inp) { fillInput(inp, stock); });
-                log('    stock: ' + stockInputs.length + ' cell(s) -> ' + stock, '#a6adc8');
-            } else if (stock !== null) {
-                log('    stock row not found', '#fab387');
-            }
-
-            if (!firstSaveBtn) {
-                var saveCandidate = g.saveInput;
-                if (!saveCandidate) {
-                    var tds = g.priceRow.querySelectorAll('td');
-                    var lastTd = tds.length ? tds[tds.length - 1] : null;
-                    saveCandidate = lastTd ? lastTd.querySelector('input[type="submit"], input[type="image"], input[type="button"]') : null;
+            // ── 4. Fill stock inputs in the next row ──────────────────────────
+            if (stock !== null) {
+                var freshRows = getAllTableRows();
+                var stockRow = freshRows[g.priceRowIdx + 1];
+                if (stockRow) {
+                    var stockInputs = getEditableInputs(stockRow);
+                    stockInputs.forEach(function(inp) { fillInput(inp, stock); });
+                    log('    stock: ' + stockInputs.length + ' input(s) -> ' + stock, '#a6adc8');
+                } else {
+                    log('    stock row not found', '#fab387');
                 }
-                if (saveCandidate) firstSaveBtn = saveCandidate;
             }
 
+            // ── 5. Click the save button (appears in td[18] after edit click) ──
+            var saveBtn = g.saveInput;
+            if (!saveBtn) {
+                // Re-scan in case save button appeared after click
+                var tds = priceRow.querySelectorAll('td');
+                var lastTd = tds.length ? tds[tds.length - 1] : null;
+                saveBtn = lastTd ? lastTd.querySelector('input[type="submit"], input[type="image"], input[type="button"]') : null;
+            }
+            if (!saveBtn) {
+                try {
+                    saveBtn = await waitFor(function() {
+                        var tds2 = priceRow.querySelectorAll('td');
+                        var lt = tds2.length ? tds2[tds2.length - 1] : null;
+                        return lt && lt.querySelector('input[type="submit"], input[type="image"], input[type="button"]') || null;
+                    }, 4000);
+                } catch(e) {
+                    log('    save button not found', '#f38ba8');
+                    continue;
+                }
+            }
+            log('    save: ' + saveBtn.outerHTML.substring(0, 80), '#585b70');
+            saveBtn.scrollIntoView({ block: 'center' });
+            saveBtn.click();
+
+            // ── 6. Wait for inputs to disappear (row committed) ───────────────
+            try { await waitFor(function() { return getEditableInputs(priceRow).length === 0 ? true : null; }, 6000); } catch(e) {}
+            await wait(300);
+            log('    \u2713 saved', '#a6e3a1');
             done++;
         }
-
-        if (!done) return 0;
-
-        var saveBtn = firstSaveBtn
-            || document.querySelector('input[type="submit"], button[type="submit"]');
-        if (!saveBtn) {
-            log('  save button not found — cannot submit', '#f38ba8');
-            return 0;
-        }
-        log('  Submitting: ' + saveBtn.outerHTML.substring(0, 120), '#a6adc8');
-        saveBtn.scrollIntoView({ block: 'center' });
-        saveBtn.click();
-        await wait(1200);
-        log('  Submitted \u2713 (' + done + ' bin(s))', '#a6e3a1');
         return done;
     }
 
