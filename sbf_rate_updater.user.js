@@ -249,100 +249,61 @@
         inp.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
-    // Extract the bin size number from a row's text content
-    function extractSizeFromRow(row) {
-        var txt = row.innerText.replace(/\s+/g, ' ').trim();
-        // Match e.g. "2", "2.5", "3" cubic metres — avoid matching years or prices
-        var m = txt.match(/\b(\d+(?:\.\d+)?)\s*(?:m(?:3|³|etres?|cubic)?|cubic)/i);
+    // ── Bin-group helpers ──────────────────────────────────────────────────────
+
+    // Extract the bin size number from any text
+    function extractSizeFromText(txt) {
+        var m = txt.match(/\b(\d+(?:\.\d+)?)\s*(?:cubic|m(?:3|³|etres?))\b/i);
         if (m) return m[1];
-        // Fallback: first standalone small number (bin sizes are typically 2–30)
-        var m2 = txt.match(/\b(\d+(?:\.\d+)?)\b/);
-        if (m2) {
-            var v = parseFloat(m2[1]);
-            if (v >= 1.5 && v <= 35) return m2[1];
-        }
         return null;
     }
 
-    async function clickAndFill(row, price, stockVal, rowLabel, stateUpdater) {
-        var editBtn = findEditBtn(row);
-        if (!editBtn) {
-            log('  ' + rowLabel + ': Edit icon not found - skipping. Row: ' + row.innerText.substring(0, 80), '#f38ba8');
-            return false;
-        }
+    /**
+     * Detect bin groups from the table.
+     * Each group has: { size, editBtnEl, priceRow, stockRow }.
+     * The page structure (from screenshot):
+     *   [header row: "X cubic metres" + edit icon on right]
+     *   [Price row: "Price:" label | base price | date inputs...]
+     *   [Stock row: "Stock:" label | date inputs...]
+     *   [Available Stock row: read-only]
+     */
+    function findBinGroups() {
+        var rows = getAllTableRows();
+        var groups = [];
 
-        log('  ' + rowLabel + (price !== null ? ' -> $' + price : ' (stock only)'));
-        editBtn.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        await wait(400);
-        var clickTarget = (editBtn.tagName === 'IMG' && editBtn.parentElement && editBtn.parentElement.tagName === 'A')
-            ? editBtn.parentElement : editBtn;
-        clickTarget.click();
-        await wait(800);
+        for (var i = 0; i < rows.length; i++) {
+            var txt = rows[i].innerText.replace(/\s+/g, ' ').trim();
+            var sz = extractSizeFromText(txt);
+            if (!sz) continue;
 
-        // Find save icon — same row, sibling row, or page-wide
-        var editRow = row;
-        var saveBtn = findSaveBtn(editRow);
-        if (!saveBtn) {
-            var trs = getAllTableRows();
-            var rowIdx = trs.indexOf(editRow);
-            for (var ri = rowIdx + 1; ri <= rowIdx + 2 && ri < trs.length; ri++) {
-                saveBtn = findSaveBtn(trs[ri]);
-                if (saveBtn) { editRow = trs[ri]; break; }
+            // Look for edit icon in this row or the next few rows belonging to this group
+            var editBtnEl = null;
+            var priceRow  = null;
+            var stockRow  = null;
+            var limit = Math.min(rows.length - 1, i + 5);
+
+            for (var j = i; j <= limit; j++) {
+                var rowTxt = rows[j].innerText.replace(/\s+/g, ' ').trim().toLowerCase();
+                if (!editBtnEl) editBtnEl = findEditBtn(rows[j]);
+                if (!priceRow  && /^\s*price\s*:/.test(rowTxt))  priceRow  = rows[j];
+                if (!stockRow  && /^\s*stock\s*:/.test(rowTxt))  stockRow  = rows[j];
+                // Stop once we hit the next bin's header
+                if (j > i && extractSizeFromText(rows[j].innerText)) break;
+            }
+
+            if (editBtnEl) {
+                groups.push({ size: sz, editBtnEl: editBtnEl, priceRow: priceRow, stockRow: stockRow, headerIdx: i });
             }
         }
-        if (!saveBtn) {
-            try {
-                saveBtn = await waitFor(function() { return findSaveBtnPage() || null; }, 6000);
-            } catch(e) {
-                log('  ' + rowLabel + ': timed out waiting for save icon - skipping.', '#f38ba8');
-                return false;
-            }
-        }
+        return groups;
+    }
 
-        var ctx = saveBtn.closest ? (saveBtn.closest('tr') || saveBtn.closest('form') || document) : document;
-
-        // Fill price if provided
-        if (price !== null) {
-            var priceInput = findPriceInput(ctx);
-            if (!priceInput) priceInput = findPriceInput(document);
-            if (!priceInput) {
-                log('  ' + rowLabel + ': price input not found - cancelling.', '#f38ba8');
-                var cancelBtn = document.querySelector(
-                    'input[type="image"][src*="cancel" i], input[type="image"][alt*="cancel" i], ' +
-                    'a[href*="cancel" i], a[onclick*="cancel" i], input[value*="cancel" i], button[value*="cancel" i]'
-                );
-                if (cancelBtn) cancelBtn.click();
-                return false;
-            }
-            fillInput(priceInput, price);
-            await wait(200);
-
-            // Fill stock
-            if (stockVal !== null) {
-                var stockInput = findStockInput(ctx, priceInput);
-                if (!stockInput) stockInput = findStockInput(document, priceInput);
-                if (stockInput) { fillInput(stockInput, stockVal); log('    stock -> ' + stockVal, '#a6adc8'); await wait(200); }
-            }
-        } else if (stockVal !== null) {
-            // Stock only — no price from JSON
-            var priceInputRef = findPriceInput(ctx) || findPriceInput(document);
-            var stockInput2 = findStockInput(ctx, priceInputRef);
-            if (!stockInput2) stockInput2 = findStockInput(document, priceInputRef);
-            if (stockInput2) { fillInput(stockInput2, stockVal); log('    stock -> ' + stockVal, '#a6adc8'); await wait(200); }
-        }
-
-        if (stateUpdater) stateUpdater();
-
-        saveBtn.scrollIntoView({ block: 'center' });
-        var saveClickTarget = (saveBtn.tagName === 'IMG' && saveBtn.parentElement && saveBtn.parentElement.tagName === 'A')
-            ? saveBtn.parentElement : saveBtn;
-        saveClickTarget.click();
-
-        try { await waitFor(function() { return !findSaveBtnPage() ? true : null; }, 8000); } catch(e) {}
-        try { await waitForRows(); } catch(e) { await wait(2000); }
-        await wait(600);
-        log('    Saved ✓', '#a6e3a1');
-        return true;
+    // Collect all editable inputs in a row (exclude hidden, readonly, disabled)
+    function getEditableInputs(row) {
+        var all = row ? row.querySelectorAll('input[type="text"], input[type="number"], input:not([type])') : [];
+        return Array.prototype.filter.call(all, function(inp) {
+            return !inp.readOnly && !inp.disabled && inp.type !== 'hidden';
+        });
     }
 
     // Build a size→price lookup map from items array
@@ -352,37 +313,98 @@
         return map;
     }
 
-    async function updateAllRowsOnPage(priceMap, startRowIdx) {
+    async function updateAllGroupsOnPage(priceMap, startGroupIdx) {
         var stockVal = getDefaultStock();
-        var rows = getAllTableRows();
-        var done = 0;
-        var rowsWithEdit = [];
+        var groups = findBinGroups();
 
-        // Collect only rows that have an edit button
-        for (var i = 0; i < rows.length; i++) {
-            if (findEditBtn(rows[i])) rowsWithEdit.push({ row: rows[i], origIdx: i });
+        if (!groups.length) {
+            log('  No bin size groups found on page!', '#f38ba8');
+            return 0;
         }
+        log('  Bin groups found: ' + groups.length, '#a6adc8');
 
-        log('  Rows with edit icon: ' + rowsWithEdit.length, '#a6adc8');
-
-        for (var j = (startRowIdx || 0); j < rowsWithEdit.length; j++) {
+        var done = 0;
+        for (var j = (startGroupIdx || 0); j < groups.length; j++) {
             if (stopFlag) return done;
-            var r = rowsWithEdit[j].row;
-            var sz = extractSizeFromRow(r);
-            var price = (sz && priceMap && priceMap[sz] !== undefined) ? priceMap[sz] : null;
+            var g       = groups[j];
+            var price   = (g.size && priceMap && priceMap[g.size] !== undefined) ? priceMap[g.size] : null;
 
-            // Skip row entirely if no price and no stock to set
-            if (price === null && stockVal === null) continue;
+            if (price === null && stockVal === null) { log('  ' + g.size + 'm³: nothing to set - skipping.', '#a6adc8'); continue; }
 
-            var label = sz ? sz + 'm³' : ('row ' + (j + 1));
+            var label = g.size + 'm³';
+            log('  ' + label + (price !== null ? ' -> $' + price : '') + (stockVal !== null ? '  stock=' + stockVal : ''));
+
+            // Click edit icon
+            var editBtnEl = g.editBtnEl;
+            editBtnEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            await wait(400);
+            var editClick = (editBtnEl.tagName === 'IMG' && editBtnEl.parentElement && editBtnEl.parentElement.tagName === 'A')
+                ? editBtnEl.parentElement : editBtnEl;
+            editClick.click();
+            await wait(800);
+
+            // After clicking edit, re-find price/stock rows (DOM may have updated)
+            var rows2 = getAllTableRows();
+            var priceRow2 = null, stockRow2 = null;
+            var scan = Math.min(rows2.length, g.headerIdx + 6);
+            for (var k = g.headerIdx; k < scan; k++) {
+                var rt = rows2[k].innerText.replace(/\s+/g, ' ').trim().toLowerCase();
+                if (!priceRow2 && /^\s*price\s*:/.test(rt)) priceRow2 = rows2[k];
+                if (!stockRow2 && /^\s*stock\s*:/.test(rt)) stockRow2 = rows2[k];
+            }
+
+            // Fill all editable inputs in Price row
+            if (price !== null && priceRow2) {
+                var priceInputs = getEditableInputs(priceRow2);
+                if (priceInputs.length) {
+                    priceInputs.forEach(function(inp) { fillInput(inp, price); });
+                    log('    price filled ' + priceInputs.length + ' cell(s)', '#a6adc8');
+                    await wait(200);
+                } else {
+                    log('    price: no editable inputs found in Price row', '#fab387');
+                }
+            }
+
+            // Fill all editable inputs in Stock row
+            if (stockVal !== null && stockRow2) {
+                var stockInputs = getEditableInputs(stockRow2);
+                if (stockInputs.length) {
+                    stockInputs.forEach(function(inp) { fillInput(inp, stockVal); });
+                    log('    stock filled ' + stockInputs.length + ' cell(s)', '#a6adc8');
+                    await wait(200);
+                } else {
+                    log('    stock: no editable inputs found in Stock row', '#fab387');
+                }
+            }
+
+            // Save progress before clicking save
             var jCopy = j;
-            var ok = await clickAndFill(r, price, stockVal, label, function() {
-                try {
-                    var ps = loadState();
-                    if (ps) { ps.itemIdx = jCopy + 1; saveState(ps); }
-                } catch(e) {}
-            });
-            if (ok) done++;
+            try { var ps = loadState(); if (ps) { ps.itemIdx = jCopy + 1; saveState(ps); } } catch(e) {}
+
+            // Find and click save icon
+            var saveBtn = findSaveBtn(g.editBtnEl.closest ? g.editBtnEl.closest('tr') || g.editBtnEl.parentElement : g.editBtnEl.parentElement);
+            if (!saveBtn) {
+                // Search in surrounding rows
+                for (var si = g.headerIdx; si <= Math.min(rows2.length - 1, g.headerIdx + 5); si++) {
+                    saveBtn = findSaveBtn(rows2[si]);
+                    if (saveBtn) break;
+                }
+            }
+            if (!saveBtn) {
+                try { saveBtn = await waitFor(function() { return findSaveBtnPage() || null; }, 6000); }
+                catch(e) { log('  ' + label + ': timed out waiting for save icon - skipping.', '#f38ba8'); continue; }
+            }
+
+            saveBtn.scrollIntoView({ block: 'center' });
+            var saveClick = (saveBtn.tagName === 'IMG' && saveBtn.parentElement && saveBtn.parentElement.tagName === 'A')
+                ? saveBtn.parentElement : saveBtn;
+            saveClick.click();
+
+            try { await waitFor(function() { return !findSaveBtnPage() ? true : null; }, 8000); } catch(e) {}
+            try { await waitForRows(); } catch(e) { await wait(2000); }
+            await wait(600);
+            done++;
+            log('    Saved ✓', '#a6e3a1');
         }
         return done;
     }
@@ -417,8 +439,8 @@
 
         log('--- ' + group.wasteType + ' ---', '#cba6f7');
         var priceMap = buildPriceMap(group.items);
-        var done = await updateAllRowsOnPage(priceMap, st.itemIdx || 0);
-        log(group.wasteType + ': ' + done + ' row(s) saved.', '#a6e3a1');
+        var done = await updateAllGroupsOnPage(priceMap, st.itemIdx || 0);
+        log(group.wasteType + ': ' + done + ' group(s) saved.', '#a6e3a1');
 
         gi++;
         st.itemIdx = 0;
