@@ -249,109 +249,140 @@
         inp.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
-    async function updateGroupItems(items, startIdx) {
-        var done = 0;
-        for (var i = (startIdx || 0); i < items.length; i++) {
-            if (stopFlag) return done;
-            var sz = items[i].size, price = items[i].price;
+    // Extract the bin size number from a row's text content
+    function extractSizeFromRow(row) {
+        var txt = row.innerText.replace(/\s+/g, ' ').trim();
+        // Match e.g. "2", "2.5", "3" cubic metres — avoid matching years or prices
+        var m = txt.match(/\b(\d+(?:\.\d+)?)\s*(?:m(?:3|³|etres?|cubic)?|cubic)/i);
+        if (m) return m[1];
+        // Fallback: first standalone small number (bin sizes are typically 2–30)
+        var m2 = txt.match(/\b(\d+(?:\.\d+)?)\b/);
+        if (m2) {
+            var v = parseFloat(m2[1]);
+            if (v >= 1.5 && v <= 35) return m2[1];
+        }
+        return null;
+    }
 
-            var row = findRowForSize(sz);
-            if (!row) { log('  ' + sz + 'm³: row not found - skipping.', '#f38ba8'); continue; }
+    async function clickAndFill(row, price, stockVal, rowLabel, stateUpdater) {
+        var editBtn = findEditBtn(row);
+        if (!editBtn) {
+            log('  ' + rowLabel + ': Edit icon not found - skipping. Row: ' + row.innerText.substring(0, 80), '#f38ba8');
+            return false;
+        }
 
-            var editBtn = findEditBtn(row);
-            if (!editBtn) {
-                log('  ' + sz + 'm³: Edit icon not found - skipping. Row: ' + row.innerText.substring(0, 100), '#f38ba8');
-                continue;
+        log('  ' + rowLabel + (price !== null ? ' -> $' + price : ' (stock only)'));
+        editBtn.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        await wait(400);
+        var clickTarget = (editBtn.tagName === 'IMG' && editBtn.parentElement && editBtn.parentElement.tagName === 'A')
+            ? editBtn.parentElement : editBtn;
+        clickTarget.click();
+        await wait(800);
+
+        // Find save icon — same row, sibling row, or page-wide
+        var editRow = row;
+        var saveBtn = findSaveBtn(editRow);
+        if (!saveBtn) {
+            var trs = getAllTableRows();
+            var rowIdx = trs.indexOf(editRow);
+            for (var ri = rowIdx + 1; ri <= rowIdx + 2 && ri < trs.length; ri++) {
+                saveBtn = findSaveBtn(trs[ri]);
+                if (saveBtn) { editRow = trs[ri]; break; }
             }
-
-            log('  ' + sz + 'm³ -> $' + price);
-            editBtn.scrollIntoView({ block: 'center', behavior: 'smooth' });
-            await wait(400);
-            // If edit btn is an img inside an anchor, click the anchor
-            var clickTarget = editBtn;
-            if (editBtn.tagName === 'IMG' && editBtn.parentElement && editBtn.parentElement.tagName === 'A') {
-                clickTarget = editBtn.parentElement;
+        }
+        if (!saveBtn) {
+            try {
+                saveBtn = await waitFor(function() { return findSaveBtnPage() || null; }, 6000);
+            } catch(e) {
+                log('  ' + rowLabel + ': timed out waiting for save icon - skipping.', '#f38ba8');
+                return false;
             }
-            clickTarget.click();
-            await wait(800);
+        }
 
-            // After clicking edit, look for save icon in the same row first
-            var editRow = row;
-            var saveBtn = findSaveBtn(editRow);
-            if (!saveBtn) {
-                // Inline edit may expand a sibling row — check next 2 rows in DOM
-                var trs = getAllTableRows();
-                var rowIdx = trs.indexOf(editRow);
-                for (var ri = rowIdx + 1; ri <= rowIdx + 2 && ri < trs.length; ri++) {
-                    saveBtn = findSaveBtn(trs[ri]);
-                    if (saveBtn) { editRow = trs[ri]; break; }
-                }
-            }
-            if (!saveBtn) {
-                // Fall back to page-wide search (modal / separate form)
-                try {
-                    saveBtn = await waitFor(function() { return findSaveBtnPage() || null; }, 6000);
-                } catch(e) {
-                    log('  ' + sz + 'm³: timed out waiting for save icon - skipping.', '#f38ba8');
-                    continue;
-                }
-            }
+        var ctx = saveBtn.closest ? (saveBtn.closest('tr') || saveBtn.closest('form') || document) : document;
 
-            // Find price input — prefer edit row context, then save button's form, then page
-            var ctx = saveBtn.closest ? (saveBtn.closest('tr') || saveBtn.closest('form') || document) : document;
+        // Fill price if provided
+        if (price !== null) {
             var priceInput = findPriceInput(ctx);
             if (!priceInput) priceInput = findPriceInput(document);
-
             if (!priceInput) {
-                log('  ' + sz + 'm³: price input not found - skipping.', '#f38ba8');
+                log('  ' + rowLabel + ': price input not found - cancelling.', '#f38ba8');
                 var cancelBtn = document.querySelector(
                     'input[type="image"][src*="cancel" i], input[type="image"][alt*="cancel" i], ' +
                     'a[href*="cancel" i], a[onclick*="cancel" i], input[value*="cancel" i], button[value*="cancel" i]'
                 );
                 if (cancelBtn) cancelBtn.click();
-                continue;
+                return false;
             }
-
             fillInput(priceInput, price);
             await wait(200);
 
-            // Fill stock input if a default stock value is set
-            var stockVal = getDefaultStock();
+            // Fill stock
             if (stockVal !== null) {
                 var stockInput = findStockInput(ctx, priceInput);
                 if (!stockInput) stockInput = findStockInput(document, priceInput);
-                if (stockInput) {
-                    fillInput(stockInput, stockVal);
-                    log('    stock -> ' + stockVal, '#a6adc8');
-                    await wait(200);
-                }
+                if (stockInput) { fillInput(stockInput, stockVal); log('    stock -> ' + stockVal, '#a6adc8'); await wait(200); }
             }
+        } else if (stockVal !== null) {
+            // Stock only — no price from JSON
+            var priceInputRef = findPriceInput(ctx) || findPriceInput(document);
+            var stockInput2 = findStockInput(ctx, priceInputRef);
+            if (!stockInput2) stockInput2 = findStockInput(document, priceInputRef);
+            if (stockInput2) { fillInput(stockInput2, stockVal); log('    stock -> ' + stockVal, '#a6adc8'); await wait(200); }
+        }
 
-            // Save progress before clicking save (page may reload)
-            try {
-                var progressState = loadState();
-                if (progressState) { progressState.itemIdx = i + 1; saveState(progressState); }
-            } catch(e) {}
+        if (stateUpdater) stateUpdater();
 
-            saveBtn.scrollIntoView({ block: 'center' });
-            // If save btn is an img inside an anchor, click the anchor
-            var saveClickTarget = saveBtn;
-            if (saveBtn.tagName === 'IMG' && saveBtn.parentElement && saveBtn.parentElement.tagName === 'A') {
-                saveClickTarget = saveBtn.parentElement;
-            }
-            saveClickTarget.click();
+        saveBtn.scrollIntoView({ block: 'center' });
+        var saveClickTarget = (saveBtn.tagName === 'IMG' && saveBtn.parentElement && saveBtn.parentElement.tagName === 'A')
+            ? saveBtn.parentElement : saveBtn;
+        saveClickTarget.click();
 
-            // Wait for page to settle (save icon disappears / rows reload)
-            try {
-                await waitFor(function() {
-                    return !findSaveBtnPage() ? true : null;
-                }, 8000);
-            } catch(e) { /* proceed anyway */ }
+        try { await waitFor(function() { return !findSaveBtnPage() ? true : null; }, 8000); } catch(e) {}
+        try { await waitForRows(); } catch(e) { await wait(2000); }
+        await wait(600);
+        log('    Saved ✓', '#a6e3a1');
+        return true;
+    }
 
-            try { await waitForRows(); } catch(e) { await wait(2000); }
-            await wait(600);
-            done++;
-            log('    Saved ✓', '#a6e3a1');
+    // Build a size→price lookup map from items array
+    function buildPriceMap(items) {
+        var map = {};
+        items.forEach(function(it) { map[it.size] = it.price; });
+        return map;
+    }
+
+    async function updateAllRowsOnPage(priceMap, startRowIdx) {
+        var stockVal = getDefaultStock();
+        var rows = getAllTableRows();
+        var done = 0;
+        var rowsWithEdit = [];
+
+        // Collect only rows that have an edit button
+        for (var i = 0; i < rows.length; i++) {
+            if (findEditBtn(rows[i])) rowsWithEdit.push({ row: rows[i], origIdx: i });
+        }
+
+        log('  Rows with edit icon: ' + rowsWithEdit.length, '#a6adc8');
+
+        for (var j = (startRowIdx || 0); j < rowsWithEdit.length; j++) {
+            if (stopFlag) return done;
+            var r = rowsWithEdit[j].row;
+            var sz = extractSizeFromRow(r);
+            var price = (sz && priceMap && priceMap[sz] !== undefined) ? priceMap[sz] : null;
+
+            // Skip row entirely if no price and no stock to set
+            if (price === null && stockVal === null) continue;
+
+            var label = sz ? sz + 'm³' : ('row ' + (j + 1));
+            var jCopy = j;
+            var ok = await clickAndFill(r, price, stockVal, label, function() {
+                try {
+                    var ps = loadState();
+                    if (ps) { ps.itemIdx = jCopy + 1; saveState(ps); }
+                } catch(e) {}
+            });
+            if (ok) done++;
         }
         return done;
     }
@@ -385,8 +416,9 @@
         try { await waitForRows(); } catch(e) { log('Table load timed out.', '#f38ba8'); }
 
         log('--- ' + group.wasteType + ' ---', '#cba6f7');
-        var done = await updateGroupItems(group.items, st.itemIdx || 0);
-        log(group.wasteType + ': ' + done + '/' + group.items.length + ' saved.', '#a6e3a1');
+        var priceMap = buildPriceMap(group.items);
+        var done = await updateAllRowsOnPage(priceMap, st.itemIdx || 0);
+        log(group.wasteType + ': ' + done + ' row(s) saved.', '#a6e3a1');
 
         gi++;
         st.itemIdx = 0;
