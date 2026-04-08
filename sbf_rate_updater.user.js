@@ -322,37 +322,45 @@
 
         // ── EDIT PAGE: inputs are already rendered, fill them directly ──────
         if (isEditPage()) {
-            log('  (edit page detected — filling all inputs directly)', '#a6adc8');
+            log('  (edit page — filling per-size)', '#a6adc8');
             var rows = getAllTableRows();
             var filledPrice = 0, filledStock = 0;
 
+            // Walk rows: when we find a "X cubic metres" header, record the size
+            // then fill the Price and Stock rows that follow (until the next header)
+            var currentSz = null;
             for (var ri = 0; ri < rows.length; ri++) {
                 var rowTxt = rows[ri].innerText.replace(/\s+/g, ' ').trim().toLowerCase();
 
-                if (/^\s*price\s*:/.test(rowTxt) && priceMap) {
-                    // Find the bin size for this price row by scanning upward
-                    var sz = null;
-                    for (var up = ri - 1; up >= 0 && up >= ri - 5; up--) {
-                        sz = extractSizeFromText(rows[up].innerText);
-                        if (sz) break;
-                    }
-                    var price = sz !== null ? priceMap[sz] : null;
-                    // If no match by size, fall back to first price in map
-                    if (price === undefined || price === null) {
+                // Detect a bin-size header row
+                var headerSz = extractSizeFromText(rows[ri].innerText);
+                if (headerSz) { currentSz = headerSz; continue; }
+
+                if (/^\s*price\s*:/.test(rowTxt) && priceMap && currentSz !== null) {
+                    var price = priceMap[currentSz];
+                    // Fallback: if only one price in map, use it regardless of size
+                    if (price === undefined) {
                         var keys = Object.keys(priceMap);
                         if (keys.length === 1) price = priceMap[keys[0]];
                     }
-                    if (price !== null && price !== undefined) {
+                    if (price !== undefined && price !== null) {
                         var inputs = getEditableInputs(rows[ri]);
                         inputs.forEach(function(inp) { fillInput(inp, price); });
                         filledPrice += inputs.length;
+                        log('    ' + currentSz + 'm\u00b3 Price row: ' + inputs.length + ' cell(s) -> $' + price, '#a6adc8');
                     }
                 }
 
-                if (/^\s*stock\s*:/.test(rowTxt) && stockVal !== null) {
-                    var sinputs = getEditableInputs(rows[ri]);
-                    sinputs.forEach(function(inp) { fillInput(inp, stockVal); });
-                    filledStock += sinputs.length;
+                if (/^\s*stock\s*:/.test(rowTxt) && stockVal !== null && currentSz !== null) {
+                    // Only fill stock for sizes that have a matching price entry
+                    var hasPriceEntry = priceMap && (priceMap[currentSz] !== undefined ||
+                        Object.keys(priceMap).length === 1);
+                    if (hasPriceEntry) {
+                        var sinputs = getEditableInputs(rows[ri]);
+                        sinputs.forEach(function(inp) { fillInput(inp, stockVal); });
+                        filledStock += sinputs.length;
+                        log('    ' + currentSz + 'm\u00b3 Stock row: ' + sinputs.length + ' cell(s) -> ' + stockVal, '#a6adc8');
+                    }
                 }
             }
 
@@ -450,12 +458,15 @@
         // If we landed on an edit page, fill inputs and save, then go back to the view page
         if (isEditPage()) {
             log('--- ' + group.wasteType + ' (edit page) ---', '#cba6f7');
-            // Reconstruct priceMap — for an edit page there's typically one bin, use currentSize if set
-            var editPriceMap = buildPriceMap(group.items);
-            // Override with the specific price saved before navigation if available
+            // Build a price map restricted to the current bin size so we only
+            // fill the rows that belong to the bin whose edit icon was clicked
+            var editPriceMap;
             if (st.currentPrice !== undefined && st.currentSize !== undefined) {
                 editPriceMap = {}; editPriceMap[st.currentSize] = st.currentPrice;
+            } else {
+                editPriceMap = buildPriceMap(group.items);
             }
+            log('  Filling bin: ' + (st.currentSize || 'all'), '#a6adc8');
             await updateAllGroupsOnPage(editPriceMap, 0);
             // After saving, navigate back to the view page to process remaining bin groups
             var viewUrl = group.url || (WASTE_URLS[group.wasteType] ? WASTE_URLS[group.wasteType] : null);
