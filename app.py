@@ -698,8 +698,9 @@ elif page == "BookABin":
 
             # --- Full data tables ---
             st.subheader("📋 All Available Sizes")
+            _bab_lt75_sizes = [s for s in Bookabin.ALL_SIZES if float(s) < 7.5]
             st.dataframe(
-                _to_df(bab_results, Bookabin.WASTE_TYPES, Bookabin.ALL_SIZES),
+                _to_df(bab_results, Bookabin.WASTE_TYPES, _bab_lt75_sizes),
                 width='stretch',
             )
 
@@ -738,7 +739,7 @@ elif page == "BookABin":
             if _price_map:
                 # Ordered waste types and sizes matching All Available Sizes table
                 _update_wts  = [wt for wt in Bookabin.WASTE_TYPES if any(k[0] == wt for k in _price_map)]
-                _update_szs  = [sz for sz in Bookabin.ALL_SIZES if any(k[1] == sz for k in _price_map)]
+                _update_szs  = [sz for sz in Bookabin.ALL_SIZES if any(k[1] == sz for k in _price_map) and float(sz) < 7.5]
                 _preview_rows = []
                 for _wt in _update_wts:
                     _row = {"Waste Type": _wt}
