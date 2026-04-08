@@ -65,6 +65,7 @@
     // Selector for any edit-like button/link
     function findEditBtn(row) {
         return row.querySelector(
+            'input[type="image"][alt="Edit Row"], input[type="image"][id*="Linkbutton1"], ' +
             'input[type="image"][src*="edit" i], input[type="image"][alt*="edit" i], input[type="image"][title*="edit" i], ' +
             'a[title*="edit" i], button[title*="edit" i], img[src*="edit" i][onclick], input[type="image"]'
         );
@@ -72,7 +73,9 @@
 
     // Find the row that contains the Edit button for a given size.
     function findRowForSize(sz) {
-        var szPat = new RegExp('(?<![\\d.])' + sz.toString().replace('.', '\\.') + '(?![\\d.])', 'i');
+        // Normalise: strip trailing "m3", "m³", "cubic metres" etc. → bare number (e.g. "2m3" → "2", "7.5" → "7.5")
+        var numStr = sz.toString().replace(/\s*m(?:3|³|etres?|cubic\s*metres?)?.*$/i, '').trim();
+        var szPat = new RegExp('(?<![\\d.])' + numStr.replace('.', '\\.') + '(?![\\d.])', 'i');
         var rows = getAllTableRows();
 
         if (rows.length === 0) {
@@ -83,6 +86,8 @@
         for (var i = 0; i < rows.length; i++) {
             var txt = rows[i].innerText.replace(/\s+/g, ' ').trim();
             if (!szPat.test(txt)) continue;
+            // Must contain "cubic" to avoid matching date-header rows (e.g. "Sat 11 Apr")
+            if (!/cubic/i.test(txt)) continue;
             // Check this row and up to 4 following rows (Price row + Stock row structure)
             var limit = Math.min(rows.length - 1, i + 4);
             for (var j = i; j <= limit; j++) {
@@ -90,13 +95,13 @@
                 if (btn) return rows[j];
             }
             // Nothing found nearby — log and return size row for caller to diagnose
-            log('  [debug] sz=' + sz + ' row found but no edit btn in rows ' + i + '-' + limit + '. Row HTML: ' + rows[i].innerHTML.substring(0, 300), '#fab387');
+            log('  [debug] sz=' + sz + ' (num=' + numStr + ') row found but no edit btn in rows ' + i + '-' + limit + '. Row HTML: ' + rows[i].innerHTML.substring(0, 300), '#fab387');
             return rows[i];
         }
 
         // Log sample rows to help diagnose
         var sample = rows.slice(0, Math.min(5, rows.length)).map(function(r) { return '"' + r.innerText.replace(/\s+/g, ' ').trim().substring(0, 80) + '"'; }).join(' | ');
-        log('  [debug] sz=' + sz + ' not found. Sample rows: ' + sample, '#fab387');
+        log('  [debug] sz=' + sz + ' (num=' + numStr + ') not found. Sample rows: ' + sample, '#fab387');
         return null;
     }
 
@@ -153,9 +158,9 @@
 
     // ── Update one group's items (current page, size-only matching) ───────────
 
-    async function updateGroupItems(items) {
+    async function updateGroupItems(items, startIdx) {
         var done = 0;
-        for (var i = 0; i < items.length; i++) {
+        for (var i = (startIdx || 0); i < items.length; i++) {
             if (stopFlag) return done;
             var sz = items[i].size, price = items[i].price;
 
@@ -164,9 +169,15 @@
 
             var editBtn = findEditBtn(row);
             if (!editBtn) {
-                // Log what's actually in this row to help diagnose
                 log('  ' + sz + 'm3: Edit button not found. Row HTML: ' + row.innerHTML.substring(0, 200), '#f38ba8');
                 continue;
+            }
+
+            // Derive ctl prefix from edit button id: "dltRates_ctl01_Linkbutton1" -> "dltRates_ctl01"
+            var ctlPrefix = null;
+            if (editBtn.id) {
+                var m = editBtn.id.match(/^(dltRates_ctl\d+)_/i);
+                if (m) ctlPrefix = m[1];
             }
 
             log('  ' + sz + 'm3 -> $' + price);
@@ -174,47 +185,66 @@
             await wait(400);
             editBtn.click();
 
-            var editTr;
+            // Wait for the save button to appear (indicates row is now in edit mode)
+            var saveBtn;
             try {
-                editTr = await waitFor(function() {
-                    var b = document.querySelector('input[alt="Update Row"], input[title="Update Row"]');
-                    return b ? b.closest('tr') : null;
+                saveBtn = await waitFor(function() {
+                    if (ctlPrefix) {
+                        var b = document.getElementById(ctlPrefix + '_lbtratesave');
+                        if (b) return b;
+                    }
+                    return document.querySelector('input[id*="lbtratesave"], input[alt="Update Row"]') || null;
                 }, 8000);
             } catch(e) {
-                log('  ' + sz + 'm3: timed out - skipping.', '#f38ba8');
+                log('  ' + sz + 'm3: timed out waiting for edit mode - skipping.', '#f38ba8');
                 var cc = document.querySelector('input[alt="Cancel"], input[title="Cancel"]');
                 if (cc) cc.click();
                 continue;
             }
 
-            var priceInput = document.evaluate(
-                './/td[@class="ratecelledit"][1]/input',
-                editTr, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null
-            ).singleNodeValue;
+            // Fill only the FIRST date-column input (next to Base, tabindex="3") in the edit row
+            var priceInput = null;
+            var editTr = saveBtn.closest('tr');
+            if (editTr) {
+                priceInput = editTr.querySelector('input.rateinput[tabindex="3"]') ||
+                    editTr.querySelector('input.rateinput');
+            }
+            if (!priceInput) priceInput = document.querySelector('input.rateinput[tabindex="3"]') ||
+                document.querySelector('input.rateinput');
 
             if (!priceInput) {
-                log('  ' + sz + 'm3: price input not found - cancelling.', '#f38ba8');
-                var cn = editTr.querySelector('input[alt="Cancel"], input[title="Cancel"]');
+                log('  ' + sz + ': price input not found - cancelling.', '#f38ba8');
+                var cn = document.querySelector('input[alt="Cancel"], input[title="Cancel"]');
                 if (cn) cn.click();
                 continue;
             }
 
+            var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
             priceInput.focus();
             priceInput.select();
-            var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
             setter.call(priceInput, String(price));
             priceInput.dispatchEvent(new Event('input',  { bubbles: true }));
             priceInput.dispatchEvent(new Event('change', { bubbles: true }));
             await wait(300);
 
-            var updateBtn = editTr.querySelector('input[alt="Update Row"], input[title="Update Row"]');
-            if (!updateBtn) { log('  ' + sz + 'm3: Update Row button missing.', '#f38ba8'); continue; }
+            // Save progress BEFORE clicking save — page may reload on postback
+            try {
+                var progressState = loadState();
+                if (progressState) { progressState.itemIdx = i + 1; saveState(progressState); }
+            } catch(e) {}
 
-            updateBtn.scrollIntoView({ block: 'center' });
-            updateBtn.click();
+            saveBtn.scrollIntoView({ block: 'center' });
+            saveBtn.click();
+
+            // Wait for the rateinput to disappear — reliable signal that edit mode closed
+            try {
+                await waitFor(function() {
+                    return document.querySelector('input.rateinput') ? null : true;
+                }, 10000);
+            } catch(e) { /* timed out — proceed anyway */ }
 
             try { await waitForRows(); } catch(e) { await wait(2500); }
-            await wait(400);
+            await wait(600);
             done++;
             log('    Saved', '#a6e3a1');
         }
@@ -238,16 +268,17 @@
         var group  = groups[gi];
 
         log('--- ' + group.wasteType + ' ---', '#cba6f7');
-        var done = await updateGroupItems(group.items);
+        var done = await updateGroupItems(group.items, st.itemIdx || 0);
         log(group.wasteType + ': ' + done + '/' + group.items.length + ' saved.', '#a6e3a1');
 
         gi++;
+        st.itemIdx = 0;
 
         if (!stopFlag && gi < groups.length) {
             // Navigate to next waste type — prefer _url from JSON, fall back to WASTE_URLS
             var nextGroup = groups[gi];
             var nextWt    = nextGroup.wasteType;
-            var nextUrl   = nextGroup.url || (WASTE_URLS[nextWt] ? WASTE_URLS[nextWt] + (st.date ? '?fromdate=' + encodeURIComponent(st.date) : '') : null);
+            var nextUrl   = nextGroup.url || (WASTE_URLS[nextWt] ? WASTE_URLS[nextWt] : null);
             if (!nextUrl) {
                 log('No URL for: ' + nextWt + ' - skipping.', '#f38ba8');
                 st.groupIdx = gi + 1;
@@ -294,19 +325,8 @@
             // ── Input UI ──
             var hint = document.createElement('div');
             hint.style.cssText = 'font-size:11px;color:#a6adc8;margin-bottom:6px;';
-            hint.textContent = 'Enter delivery date, paste the Update Price table, then click Update Prices.';
+            hint.textContent = 'Paste the Update Price JSON, then click Update Prices.';
             body.appendChild(hint);
-
-            var dateRow = document.createElement('div');
-            dateRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;';
-            var dateLbl = document.createElement('label');
-            dateLbl.textContent = 'Delivery Date:';
-            dateLbl.style.cssText = 'font-size:11px;color:#a6adc8;white-space:nowrap;';
-            var dateInp = document.createElement('input');
-            dateInp.type = 'text'; dateInp.id = 'bb-date'; dateInp.placeholder = 'D/MM/YYYY';
-            dateInp.style.cssText = 'flex:1;background:#181825;color:#cdd6f4;border:1px solid #585b70;border-radius:4px;padding:4px 8px;font-size:12px;';
-            dateRow.appendChild(dateLbl); dateRow.appendChild(dateInp);
-            body.appendChild(dateRow);
 
             var ta = document.createElement('textarea');
             ta.id = 'bb-paste';
@@ -390,16 +410,16 @@
                 logDiv.style.display = '';
                 return;
             }
-            var dateVal  = (document.getElementById('bb-date') || {}).value || '';
+            var dateVal  = '';
             var firstGroup = groups[0];
             var firstWt   = firstGroup.wasteType;
-            var firstUrl  = firstGroup.url || (WASTE_URLS[firstWt] ? WASTE_URLS[firstWt] + (dateVal ? '?fromdate=' + encodeURIComponent(dateVal) : '') : null);
+            var firstUrl  = firstGroup.url || (WASTE_URLS[firstWt] ? WASTE_URLS[firstWt] : null);
             if (!firstUrl) {
                 logDiv.innerHTML = '<div style="color:#f38ba8">No URL mapping for: ' + firstWt + '</div>';
                 logDiv.style.display = '';
                 return;
             }
-            var st = { date: dateVal, groups: groups, groupIdx: 0, logs: [] };
+            var st = { groups: groups, groupIdx: 0, logs: [] };
             saveState(st);
             logDiv.innerHTML = ''; logDiv.style.display = '';
             log('Starting... navigating to ' + firstWt + '...');

@@ -735,7 +735,7 @@ def _match_size(description: str, price_map: dict):
     """
     Try to match a row description string against the keys in price_map.
     Keys are size strings like "3", "6", "7.5".
-    Returns the matched price value or None.
+    Returns (matched_key, matched_price) or (None, None).
     """
     desc_lower = description.lower()
     # Sort keys longest-first so "7.5" is tried before "7"
@@ -751,12 +751,12 @@ def _match_size(description: str, price_map: dict):
             f"{key_str}.0m",
         ]
         if any(p in desc_lower for p in size_patterns):
-            return price_map[key]
+            return key, price_map[key]
         # Word-boundary fallback: key surrounded by non-digit chars
         import re as _re
         if _re.search(rf'(?<!\d){_re.escape(key_str)}(?!\d)', desc_lower):
-            return price_map[key]
-    return None
+            return key, price_map[key]
+    return None, None
 
 
 def auto_update_rates(supplier_id: str, password: str, from_date: str,
@@ -839,8 +839,15 @@ def auto_update_rates(supplier_id: str, password: str, from_date: str,
             if not description:
                 description = f"Row {row_idx}"
 
-            matched_price = _match_size(description, price_map)
+            matched_key, matched_price = _match_size(description, price_map)
             if matched_price is not None:
+                try:
+                    bin_size = float(matched_key)
+                except (TypeError, ValueError):
+                    bin_size = None
+                if bin_size is not None and bin_size >= 7.5:
+                    _status(f"Skipping row {row_idx} ({description}): bin size {matched_key}m³ >= 7.5m³")
+                    continue
                 row_updates[row_idx] = matched_price
                 matched_info[row_idx] = {"description": description, "new_price": matched_price}
 
