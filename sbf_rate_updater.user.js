@@ -255,9 +255,18 @@
 
     // ── Bin-group helpers ──────────────────────────────────────────────────────
 
-    // Extract the bin size number from any text
+    // Extract the bin size number from any text.
+    // Handles formats like:
+    //   "2 cubic metres"
+    //   "Marrel / 2 cubic metres / No Max Weight"
+    //   "Marrel 3 cubic metres"
+    //   "2m3", "2 m³"
     function extractSizeFromText(txt) {
+        // Primary: number immediately followed by cubic/m3/metres
         var m = txt.match(/\b(\d+(?:\.\d+)?)\s*(?:cubic|m(?:3|³|etres?))\b/i);
+        if (m) return m[1];
+        // Fallback: "Marrel [/] X" — number that follows the word "Marrel"
+        m = txt.match(/\bmarrel\b[^0-9]*(\d+(?:\.\d+)?)/i);
         if (m) return m[1];
         return null;
     }
