@@ -1551,11 +1551,29 @@ elif page == "SkipBinFinder":
 
             # --- Full data tables ---
             st.subheader("📋 All Available Sizes")
-            _sbf_lt75_sizes = [s for s in SBF.ALL_SIZES if (lambda v: v < 7.5 or (v == 7.5 and not s.endswith('ns')))(float(s[:-2] if s.endswith('ns') else s))]
-            st.dataframe(
-                _to_df(sbf_results, SBF.WASTE_TYPES, _sbf_lt75_sizes),
-                width='stretch',
-            )
+            # Non-ns sizes <= 7.5 become columns; ns sizes become a new row
+            _sbf_col_sizes = [s for s in SBF.ALL_SIZES if not s.endswith('ns') and float(s) <= 7.5]
+            _sbf_rows = []
+            for _wt in SBF.WASTE_TYPES:
+                _row = {"Waste Type": _wt}
+                for _s in _sbf_col_sizes:
+                    _pr = sbf_results.get(_wt, {}).get(_s)
+                    _row[f"{_s} m\u00b3"] = f"${_pr:,.0f}" if isinstance(_pr, (int, float)) else "N/A"
+                _sbf_rows.append(_row)
+            # Extra row for ns prices (Mixed Heavy Waste no-solid)
+            _ns_row = {"Waste Type": "Mixed Heavy Waste (With no Soild & Dirt)"}
+            for _s in _sbf_col_sizes:
+                _ns_key = _s + "ns"
+                _ns_pr = None
+                for _wt2 in SBF.WASTE_TYPES:
+                    _v = sbf_results.get(_wt2, {}).get(_ns_key)
+                    if isinstance(_v, (int, float)) and (_ns_pr is None or _v < _ns_pr):
+                        _ns_pr = _v
+                _ns_row[f"{_s} m\u00b3"] = f"${_ns_pr:,.0f}" if _ns_pr is not None else "N/A"
+            if any(v != "N/A" for k, v in _ns_row.items() if k != "Waste Type"):
+                _sbf_rows.append(_ns_row)
+            _df_sbf_avail = pd.DataFrame(_sbf_rows).set_index("Waste Type")
+            st.dataframe(_df_sbf_avail, width='stretch')
 
             st.markdown("---")
 
@@ -1587,15 +1605,27 @@ elif page == "SkipBinFinder":
 
             if _sbf_price_map:
                 _sbf_update_wts = [wt for wt in SBF.WASTE_TYPES if any(k[0] == wt for k in _sbf_price_map)]
-                # Include both regular and ns sizes that actually have data, ordered by ALL_SIZES, exclude >= 7.5
-                _sbf_update_szs = [sz for sz in SBF.ALL_SIZES if (lambda v: v < 7.5 or (v == 7.5 and not sz.endswith('ns')))(float(sz[:-2] if sz.endswith('ns') else sz)) and any(k[1] == sz for k in _sbf_price_map)]
+                # Non-ns sizes <= 7.5 as columns; ns mapped to new row
+                _sbf_update_szs = [sz for sz in SBF.ALL_SIZES if not sz.endswith('ns') and float(sz) <= 7.5 and any(k[1] == sz for k in _sbf_price_map)]
                 _sbf_preview_rows = []
                 for _wt in _sbf_update_wts:
                     _row = {"Waste Type": _wt}
                     for _sz in _sbf_update_szs:
                         _val = _sbf_price_map.get((_wt, _sz))
-                        _row[_fmt_size_col(_sz)] = f"${_val:,.0f}" if _val is not None else "N/A"
+                        _row[f"{_sz} m\u00b3"] = f"${_val:,.0f}" if _val is not None else "N/A"
                     _sbf_preview_rows.append(_row)
+                # ns row
+                _sbf_ns_row = {"Waste Type": "Mixed Heavy Waste (With no Soild & Dirt)"}
+                for _sz in _sbf_update_szs:
+                    _ns_key = _sz + "ns"
+                    _ns_val = None
+                    for _wt3 in _sbf_update_wts:
+                        _v3 = _sbf_price_map.get((_wt3, _ns_key))
+                        if _v3 is not None and (_ns_val is None or _v3 < _ns_val):
+                            _ns_val = _v3
+                    _sbf_ns_row[f"{_sz} m\u00b3"] = f"${_ns_val:,.0f}" if _ns_val is not None else "N/A"
+                if any(v != "N/A" for k, v in _sbf_ns_row.items() if k != "Waste Type"):
+                    _sbf_preview_rows.append(_sbf_ns_row)
                 _df_sbf_preview = pd.DataFrame(_sbf_preview_rows).set_index("Waste Type")
                 st.dataframe(_df_sbf_preview, width='stretch')
 
@@ -1619,6 +1649,19 @@ elif page == "SkipBinFinder":
                             _val2 = _sbf_price_map.get((_wt2, _sz2))
                             if _val2 is not None:
                                 _sbf_json_data[_wt2][_sz2] = _val2
+                    # Include ns row in JSON export
+                    _sbf_ns_export = {}
+                    for _sz2 in _sbf_update_szs:
+                        _ns_key2 = _sz2 + "ns"
+                        _ns_val2 = None
+                        for _wt3b in _sbf_update_wts:
+                            _v3b = _sbf_price_map.get((_wt3b, _ns_key2))
+                            if _v3b is not None and (_ns_val2 is None or _v3b < _ns_val2):
+                                _ns_val2 = _v3b
+                        if _ns_val2 is not None:
+                            _sbf_ns_export[_sz2] = _ns_val2
+                    if _sbf_ns_export:
+                        _sbf_json_data["Mixed Heavy Waste (With no Soild & Dirt)"] = _sbf_ns_export
                     _sbf_json_text = _json2.dumps(_sbf_json_data, indent=2)
                     _sbf_copy_js = f"""
                     <textarea id="_sbf_cp_buf" style="position:absolute;left:-9999px">{_sbf_json_text}</textarea>
