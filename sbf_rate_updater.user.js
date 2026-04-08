@@ -156,8 +156,20 @@
         return null;
     }
 
-    // Find the row for a given size
-    function findRowForSize(sz) {
+    // Return the absolute href of the edit link in a row
+    function findEditHref(row) {
+        // Anchor with href containing action=edit or &id=
+        var a = row.querySelector('a[href*="action=edit"], a[href*="&id="], a[href*="?id="]');
+        if (a && a.href) return a.href;
+        // Anchor wrapping an edit image
+        var img = row.querySelector('img[src*="edit" i], img[alt*="edit" i]');
+        if (img && img.parentElement && img.parentElement.tagName === 'A' && img.parentElement.href) {
+            return img.parentElement.href;
+        }
+        return null;
+    }
+
+
         var numStr = sz.toString().replace(/\s*m(?:3|³|etres?)?.*$/i, '').trim();
         var szPat = new RegExp('(?<![\\d.])' + numStr.replace('.', '\\.') + '(?![\\d.])', 'i');
         var rows = getAllTableRows();
@@ -336,109 +348,47 @@
         return map;
     }
 
-    async function updateAllGroupsOnPage(priceMap) {
-        var groups = findBinGroups();
-        if (!groups.length) {
-            log('  No bin groups found on page!', '#f38ba8');
-            var dbgRows = getAllTableRows();
-            log('  [debug] total rows=' + dbgRows.length, '#585b70');
-            dbgRows.slice(0, 6).forEach(function(r, ri) {
-                log('  [debug] row[' + ri + ']: "' + r.innerText.replace(/\s+/g, ' ').trim().substring(0, 80) + '"', '#585b70');
-            });
-            return 0;
+    // Fill the current per-bin edit page (URL has &id=N) with price + stock, then submit.
+    async function fillBinEditPage(price, stock) {
+        try { await waitForRows(); } catch(e) {}
+        var allRows = getAllTableRows();
+        var priceCount = 0, stockCount = 0;
+
+        allRows.forEach(function(row) {
+            var firstCell = row.cells && row.cells[0] ? row.cells[0].textContent.trim().toLowerCase() : '';
+            var isPrice = /^price/.test(firstCell);
+            var isStock = /^stock/.test(firstCell) && !/available/.test(firstCell);
+            if (isPrice && price !== undefined && price !== null) {
+                var inputs = getEditableInputs(row);
+                inputs.forEach(function(inp) { fillInput(inp, price); priceCount++; });
+            }
+            if (isStock && stock !== null) {
+                var inputs = getEditableInputs(row);
+                inputs.forEach(function(inp) { fillInput(inp, stock); stockCount++; });
+            }
+        });
+
+        log('    price filled: ' + priceCount + '  stock filled: ' + stockCount, '#a6adc8');
+
+        // Submit the form
+        var saveBtn = document.querySelector(
+            'input[type="submit"], input[type="image"], button[type="submit"]'
+        );
+        if (!saveBtn) {
+            log('    save button not found on page!', '#f38ba8');
+            return false;
         }
-        log('  Bin groups found: ' + groups.length + ', priceMap: ' + JSON.stringify(priceMap), '#a6adc8');
-
-        var done = 0;
-        for (var j = 0; j < groups.length; j++) {
-            if (stopFlag) return done;
-            var g     = groups[j];
-            var price = (priceMap && priceMap[g.size] !== undefined) ? priceMap[g.size] : undefined;
-            var stock = getStockForSize(g.size);
-
-            if (price === undefined && stock === null) {
-                log('  ' + g.size + 'm\u00b3: skip (no price/stock rule)', '#a6adc8');
-                continue;
-            }
-
-            log('  ' + g.size + 'm\u00b3 -> $' + price + (stock !== null ? ' stock=' + stock : '') +
-                ' editBtn=' + (g.editBtnEl ? g.editBtnEl.tagName + (g.editBtnEl.src || g.editBtnEl.href || '') : 'null'), '#a6adc8');
-
-            // ── 1. Click the per-row edit trigger to activate inline inputs ────
-            var editEl = g.editBtnEl;
-            if (!editEl) {
-                log('    no edit button found — skipping', '#f38ba8');
-                continue;
-            }
-            var editClick = (editEl.tagName === 'IMG' && editEl.parentElement && editEl.parentElement.tagName === 'A')
-                ? editEl.parentElement : editEl;
-            editClick.scrollIntoView({ block: 'center' });
-            await wait(200);
-            editClick.click();
-
-            // ── 2. Wait for price-row inputs to become editable ───────────────
-            var priceRow = g.priceRow;
-            try {
-                await waitFor(function() { return getEditableInputs(priceRow).length > 0 ? true : null; }, 5000);
-            } catch(e) {
-                log('    timeout waiting for inputs in row (got ' + getEditableInputs(priceRow).length + ')', '#f38ba8');
-                continue;
-            }
-
-            // ── 3. Fill price inputs ──────────────────────────────────────────
-            if (price !== undefined && price !== null) {
-                var priceInputs = getEditableInputs(priceRow);
-                priceInputs.forEach(function(inp) { fillInput(inp, price); });
-                log('    price: ' + priceInputs.length + ' input(s) -> $' + price, '#a6adc8');
-            }
-
-            // ── 4. Fill stock inputs in the next row ──────────────────────────
-            if (stock !== null) {
-                var freshRows = getAllTableRows();
-                var stockRow = freshRows[g.priceRowIdx + 1];
-                if (stockRow) {
-                    var stockInputs = getEditableInputs(stockRow);
-                    stockInputs.forEach(function(inp) { fillInput(inp, stock); });
-                    log('    stock: ' + stockInputs.length + ' input(s) -> ' + stock, '#a6adc8');
-                } else {
-                    log('    stock row not found', '#fab387');
-                }
-            }
-
-            // ── 5. Click the save button (appears in td[18] after edit click) ──
-            var saveBtn = g.saveInput;
-            if (!saveBtn) {
-                // Re-scan in case save button appeared after click
-                var tds = priceRow.querySelectorAll('td');
-                var lastTd = tds.length ? tds[tds.length - 1] : null;
-                saveBtn = lastTd ? lastTd.querySelector('input[type="submit"], input[type="image"], input[type="button"]') : null;
-            }
-            if (!saveBtn) {
-                try {
-                    saveBtn = await waitFor(function() {
-                        var tds2 = priceRow.querySelectorAll('td');
-                        var lt = tds2.length ? tds2[tds2.length - 1] : null;
-                        return lt && lt.querySelector('input[type="submit"], input[type="image"], input[type="button"]') || null;
-                    }, 4000);
-                } catch(e) {
-                    log('    save button not found', '#f38ba8');
-                    continue;
-                }
-            }
-            log('    save: ' + saveBtn.outerHTML.substring(0, 80), '#585b70');
-            saveBtn.scrollIntoView({ block: 'center' });
-            saveBtn.click();
-
-            // ── 6. Wait for inputs to disappear (row committed) ───────────────
-            try { await waitFor(function() { return getEditableInputs(priceRow).length === 0 ? true : null; }, 6000); } catch(e) {}
-            await wait(300);
-            log('    \u2713 saved', '#a6e3a1');
-            done++;
-        }
-        return done;
+        log('    submit: ' + saveBtn.outerHTML.substring(0, 80), '#585b70');
+        saveBtn.click();
+        return true;
     }
 
     // ── Main run loop ─────────────────────────────────────────────────────────
+    //
+    // Each bin has its own edit URL: rates_manage.php?action=edit&min_date=...&id=N
+    // State machine:
+    //   Phase A — on the view/overview page: collect per-bin edit hrefs → navigate to first
+    //   Phase B — on a per-bin edit page (&id=N): fill inputs, submit → advance to next bin
 
     async function runFromState(st) {
         stopFlag = false;
@@ -450,69 +400,124 @@
         var groups = st.groups;
         var gi     = st.groupIdx || 0;
         var group  = groups[gi];
+        var viewUrl = group.url || (WASTE_URLS[group.wasteType] || null);
 
-        // ── Derive edit URL from view URL ─────────────────────────────────────
-        // view URL:  rates_manage.php?min_date=YYYY-MM-DD
-        // edit URL:  rates_manage.php?action=edit&min_date=YYYY-MM-DD
-        function toEditUrl(url) {
-            if (!url) return null;
-            if (/[?&]action=edit/i.test(url)) return url;
-            return url.indexOf('?') !== -1
-                ? url.replace('?', '?action=edit&')
-                : url + '?action=edit';
-        }
+        // ── Phase B: we already have the per-bin edit URL list ────────────────
+        if (st.editUrls) {
+            var bi  = st.binIdx || 0;
+            var bin = st.editUrls[bi];
+            log('[' + group.wasteType + '] bin ' + (bi+1) + '/' + st.editUrls.length +
+                ' size=' + bin.size + (bin.price !== undefined ? ' $'+bin.price : '') +
+                (bin.stock !== null ? ' stock='+bin.stock : ''), '#cba6f7');
 
-        var viewUrl = group.url || (WASTE_URLS[group.wasteType] ? WASTE_URLS[group.wasteType] : null);
-        var editUrl = toEditUrl(viewUrl);
-
-        // ── Navigate to edit page if not already there ────────────────────────
-        if (!isEditPage() || !currentPageMatchesGroup(group)) {
-            if (editUrl) {
-                log('Navigating to edit page for ' + group.wasteType + '...', '#89b4fa');
-                saveState(st);
-                await wait(400);
-                window.location.href = editUrl;
+            var ok = await fillBinEditPage(bin.price, bin.stock);
+            if (!ok) {
+                log('  fill failed — aborting', '#f38ba8');
+                clearState();
+                if (runBtn) runBtn.disabled = false;
+                if (stopBtn) stopBtn.disabled = true;
                 return;
             }
-        }
 
-        // ── We are on the edit page ───────────────────────────────────────────
-        try { await waitForRows(); } catch(e) { log('Table load timed out.', '#f38ba8'); }
-        log('[debug] href=' + decodeURIComponent(window.location.href), '#585b70');
-
-        log('--- ' + group.wasteType + ' ---', '#cba6f7');
-        var priceMap = buildPriceMap(group.items);
-        var done = await updateAllGroupsOnPage(priceMap);
-        log(group.wasteType + ': ' + done + ' bin(s) updated.', '#a6e3a1');
-
-        gi++;
-        if (!stopFlag && gi < groups.length) {
-            var nextGroup = groups[gi];
-            var nextWt    = nextGroup.wasteType;
-            var nextEditUrl = toEditUrl(nextGroup.url || (WASTE_URLS[nextWt] ? WASTE_URLS[nextWt] : null));
-            if (!nextEditUrl) {
-                log('No URL for: ' + nextWt + ' - skipping.', '#f38ba8');
-                st.groupIdx = gi + 1;
+            bi++;
+            if (!stopFlag && bi < st.editUrls.length) {
+                st.binIdx = bi;
                 saveState(st);
-                await runFromState(st);
+                log('  navigating to next bin...', '#89b4fa');
+                await wait(500);
+                window.location.href = st.editUrls[bi].href;
                 return;
             }
+
+            // All bins for this waste type done
+            log(group.wasteType + ': all bins done.', '#a6e3a1');
+            delete st.editUrls;
+            delete st.binIdx;
+            gi++;
             st.groupIdx = gi;
-            saveState(st);
-            log('Navigating to ' + nextWt + '...', '#89b4fa');
-            await wait(600);
-            window.location.href = nextEditUrl;
+
+            if (!stopFlag && gi < groups.length) {
+                var nxt = groups[gi];
+                var nxtUrl = nxt.url || (WASTE_URLS[nxt.wasteType] || null);
+                if (!nxtUrl) {
+                    log('No URL for: ' + nxt.wasteType + ' — skipping.', '#f38ba8');
+                    st.groupIdx = gi + 1;
+                    saveState(st);
+                    await runFromState(st);
+                    return;
+                }
+                saveState(st);
+                log('Navigating to ' + nxt.wasteType + '...', '#89b4fa');
+                await wait(500);
+                window.location.href = nxtUrl;
+                return;
+            }
+
+            clearState();
+            log(stopFlag ? 'Stopped.' : 'All done!', stopFlag ? '#fab387' : '#a6e3a1');
+            if (runBtn)  runBtn.disabled  = false;
+            if (stopBtn) stopBtn.disabled = true;
             return;
         }
 
-        clearState();
-        if (stopFlag) {
-            log('Stopped.', '#fab387');
-        } else {
-            log('All done!', '#a6e3a1');
+        // ── Phase A: navigate to view page and collect per-bin edit hrefs ─────
+        if (!viewUrl) {
+            log('No URL for: ' + group.wasteType, '#f38ba8');
+            st.groupIdx = gi + 1;
+            saveState(st);
+            await runFromState(st);
+            return;
         }
-        if (runBtn)  runBtn.disabled  = false;
-        if (stopBtn) stopBtn.disabled = true;
+
+        // Navigate to view page if we're not already there (or if we're on an id= page)
+        var onViewPage = currentPageMatchesGroup(group) && !/[&?]id=/.test(window.location.href);
+        if (!onViewPage) {
+            log('Navigating to ' + group.wasteType + ' (collecting edit links)...', '#89b4fa');
+            saveState(st);
+            await wait(400);
+            window.location.href = viewUrl;
+            return;
+        }
+
+        // Collect per-bin edit hrefs from the current view page
+        try { await waitForRows(); } catch(e) { log('Table load timed out.', '#f38ba8'); }
+        log('--- ' + group.wasteType + ' (collecting links) ---', '#cba6f7');
+
+        var priceMap = buildPriceMap(group.items);
+        var rows = getAllTableRows();
+        var editUrls = [];
+        var seen = {};
+        rows.forEach(function(row) {
+            var sz = extractSizeFromText(row.innerText);
+            if (!sz || seen[sz]) return;
+            var price = priceMap[sz];
+            var stock = getStockForSize(sz);
+            if (price === undefined && stock === null) return;
+            var href = findEditHref(row);
+            if (!href) return;
+            seen[sz] = true;
+            editUrls.push({ size: sz, href: href, price: price, stock: stock });
+            log('  found sz=' + sz + ' href=...' + href.replace(/.*\?/, '?'), '#585b70');
+        });
+
+        if (!editUrls.length) {
+            log('  No bin edit links found on page!', '#f38ba8');
+            // Dump first 5 rows for debug
+            rows.slice(0, 5).forEach(function(r, ri) {
+                log('  row[' + ri + ']: "' + r.innerText.replace(/\s+/g, ' ').trim().substring(0, 80) + '"', '#585b70');
+            });
+            clearState();
+            if (runBtn)  runBtn.disabled  = false;
+            if (stopBtn) stopBtn.disabled = true;
+            return;
+        }
+
+        log('  ' + editUrls.length + ' bin(s) to update. Starting...', '#a6adc8');
+        st.editUrls = editUrls;
+        st.binIdx   = 0;
+        saveState(st);
+        await wait(400);
+        window.location.href = editUrls[0].href;
     }
 
     // ── Panel ─────────────────────────────────────────────────────────────────
@@ -695,21 +700,28 @@
         console.log('[SBF RateUpdater] init href=' + href);
         var state = loadState();
         if (state) {
-            // Resume on both view pages and edit pages
             if (isRatesPage()) {
                 buildPanel(state);
                 return;
             }
-            // On a non-rates page, navigate to the edit page for current group
-            var gi = state.groupIdx || 0;
+            // Not on a rates page — navigate to the right place
+            var gi    = state.groupIdx || 0;
             var group = state.groups && state.groups[gi];
-            var baseUrl = group && (group.url || (WASTE_URLS[group.wasteType] ? WASTE_URLS[group.wasteType] : null));
+            if (state.editUrls && state.editUrls.length) {
+                // Phase B: go directly to the current bin's edit URL
+                var bi  = state.binIdx || 0;
+                var bin = state.editUrls[bi];
+                if (bin && bin.href) {
+                    buildPanel(state);
+                    setTimeout(function() { window.location.href = bin.href; }, 600);
+                    return;
+                }
+            }
+            // Phase A: go to the waste type's view page
+            var baseUrl = group && (group.url || (WASTE_URLS[group.wasteType] || null));
             if (baseUrl) {
-                var editUrl = baseUrl.indexOf('?') !== -1
-                    ? baseUrl.replace('?', '?action=edit&')
-                    : baseUrl + '?action=edit';
                 buildPanel(state);
-                setTimeout(function() { window.location.href = editUrl; }, 600);
+                setTimeout(function() { window.location.href = baseUrl; }, 600);
                 return;
             }
         }
