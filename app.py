@@ -1050,22 +1050,16 @@ elif page == "BestPriceSkipBins":
                     "Other accounts: "
                     + "  |  ".join(f"{a['label']}: `{a['username']}` (postcode {a.get('postcode') or 'not set'})" for a in _unmatched)
                 )
-            _bpsb_lt12 = [s for s in BPSB.ALL_SIZES if float(s) <= 12]
-            _BPSB_EXTRA_SIZES = ["15", "16", "20", "30"]
-            _BPSB_LARGE_WTS   = {"General Waste", "Green Garden Waste"}
-
-            def _edit_sizes_for(wt):
-                """Return the sizes to edit for a given waste type."""
-                base = [s for s in _bpsb_lt12 if s in _orig_prices.get(wt, {})]
-                if wt in _BPSB_LARGE_WTS:
-                    extras = [s for s in _BPSB_EXTRA_SIZES if s in _orig_prices.get(wt, {})]
-                    return base + extras
-                return base
-
-            # Header columns show all possible sizes (union, for display)
-            _bpsb_display_sizes = _bpsb_lt12 + _BPSB_EXTRA_SIZES
             # Read orig_prices from session state — only present after a fresh search
             _orig_prices = st.session_state.get("bpsb_edited_prices", {})
+
+            # Only show/edit sizes < 7.5 m³ (i.e. 2, 3, 4, 5, 6, 7)
+            _BPSB_SMALL_SIZES = [s for s in BPSB.ALL_SIZES if float(s) < 7.5]
+            _bpsb_display_sizes = _BPSB_SMALL_SIZES
+
+            def _edit_sizes_for(wt):
+                """Return sizes to edit (only < 7.5 m³) that have a price for this waste type."""
+                return [s for s in _BPSB_SMALL_SIZES if s in _orig_prices.get(wt, {})]
 
             if not _orig_prices:
                 st.info("Run a price search above to populate the Edited Price table.")
