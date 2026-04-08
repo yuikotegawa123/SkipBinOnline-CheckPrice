@@ -698,7 +698,7 @@ elif page == "BookABin":
 
             # --- Full data tables ---
             st.subheader("📋 All Available Sizes")
-            _bab_lt75_sizes = [s for s in Bookabin.ALL_SIZES if float(s) < 7.5]
+            _bab_lt75_sizes = [s for s in Bookabin.ALL_SIZES if float(s) <= 7.5]
             st.dataframe(
                 _to_df(bab_results, Bookabin.WASTE_TYPES, _bab_lt75_sizes),
                 width='stretch',
@@ -739,7 +739,7 @@ elif page == "BookABin":
             if _price_map:
                 # Ordered waste types and sizes matching All Available Sizes table
                 _update_wts  = [wt for wt in Bookabin.WASTE_TYPES if any(k[0] == wt for k in _price_map)]
-                _update_szs  = [sz for sz in Bookabin.ALL_SIZES if float(sz) < 7.5 and any(k[1] == sz for k in _price_map)]
+                _update_szs  = [sz for sz in Bookabin.ALL_SIZES if float(sz) <= 7.5 and any(k[1] == sz for k in _price_map)]
                 _preview_rows = []
                 for _wt in _update_wts:
                     _row = {"Waste Type": _wt}
@@ -1055,7 +1055,7 @@ elif page == "BestPriceSkipBins":
             _orig_prices = st.session_state.get("bpsb_edited_prices", {})
 
             # Only show/edit sizes < 7.5 m³ (i.e. 2, 3, 4, 5, 6, 7)
-            _BPSB_SMALL_SIZES = [s for s in BPSB.ALL_SIZES if float(s) < 7.5]
+            _BPSB_SMALL_SIZES = [s for s in BPSB.ALL_SIZES if float(s) <= 7.5]
             _bpsb_display_sizes = _BPSB_SMALL_SIZES
 
             def _edit_sizes_for(wt):
@@ -1555,7 +1555,7 @@ elif page == "SkipBinFinder":
 
             # --- Full data tables ---
             st.subheader("📋 All Available Sizes")
-            _sbf_lt75_sizes = [s for s in SBF.ALL_SIZES if float(s[:-2] if s.endswith('ns') else s) < 7.5]
+            _sbf_lt75_sizes = [s for s in SBF.ALL_SIZES if float(s[:-2] if s.endswith('ns') else s) <= 7.5]
             st.dataframe(
                 _to_df(sbf_results, SBF.WASTE_TYPES, _sbf_lt75_sizes),
                 width='stretch',
@@ -1596,7 +1596,7 @@ elif page == "SkipBinFinder":
             if _sbf_price_map:
                 _sbf_update_wts = [wt for wt in SBF.WASTE_TYPES if any(k[0] == wt for k in _sbf_price_map)]
                 # Include both regular and ns sizes that actually have data, ordered by ALL_SIZES, exclude >= 7.5
-                _sbf_update_szs = [sz for sz in SBF.ALL_SIZES if float(sz[:-2] if sz.endswith('ns') else sz) < 7.5 and any(k[1] == sz for k in _sbf_price_map)]
+                _sbf_update_szs = [sz for sz in SBF.ALL_SIZES if float(sz[:-2] if sz.endswith('ns') else sz) <= 7.5 and any(k[1] == sz for k in _sbf_price_map)]
                 _sbf_preview_rows = []
                 for _wt in _sbf_update_wts:
                     _row = {"Waste Type": _wt}
@@ -1849,7 +1849,7 @@ elif page == "SkipBinsOnline":
 
             st.subheader("📋 All Available Sizes")
             _sbo_waste = {wt: list(sizes.keys()) for wt, sizes in sbo_results.items()}
-            _sbo_lt75_all = [s for s in SBO.ALL_SIZES if float(s) < 7.5]
+            _sbo_lt75_all = [s for s in SBO.ALL_SIZES if float(s) <= 7.5]
             st.dataframe(_to_df(sbo_results, _sbo_waste, _sbo_lt75_all), width='stretch')
 
             st.markdown("---")
@@ -1881,7 +1881,7 @@ elif page == "SkipBinsOnline":
                     + "  |  ".join(f"{a['label']}: `{a['username']}` (postcode {a.get('postcode') or 'not set'})" for a in _sbo_unmatched)
                 )
 
-            _sbo_lt75 = [s for s in SBO.ALL_SIZES if float(s) < 7.5]
+            _sbo_lt75 = [s for s in SBO.ALL_SIZES if float(s) <= 7.5]
             _sbo_orig  = st.session_state.get("sbo_edited_prices", {})
 
             def _sbo_edit_sizes_for(wt):
