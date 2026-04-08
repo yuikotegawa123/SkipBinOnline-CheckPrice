@@ -341,6 +341,7 @@
         if (isEditPage()) {
             log('  (edit page — filling per-size)', '#a6adc8');
             var rows = getAllTableRows();
+            log('  [debug] rows found: ' + rows.length + ', priceMap keys: ' + JSON.stringify(Object.keys(priceMap || {})), '#585b70');
             var filledPrice = 0, filledStock = 0;
 
             // Walk rows: when we find a "X cubic metres" header, record the size
@@ -351,7 +352,11 @@
 
                 // Detect a bin-size header row
                 var headerSz = extractSizeFromText(rows[ri].innerText);
-                if (headerSz) { currentSz = headerSz; continue; }
+                if (headerSz) {
+                    currentSz = headerSz;
+                    log('  [debug] header row [' + ri + '] size=' + currentSz + ': "' + rows[ri].innerText.replace(/\s+/g,' ').substring(0,60) + '"', '#585b70');
+                    continue;
+                }
 
                 if (/^\s*price\s*:/.test(rowTxt) && priceMap && currentSz !== null) {
                     var price = priceMap[currentSz];
@@ -470,6 +475,9 @@
 
         // Wait for table to load
         try { await waitForRows(); } catch(e) { log('Table load timed out.', '#f38ba8'); }
+
+        log('[debug] href=' + decodeURIComponent(window.location.href), '#585b70');
+        log('[debug] isEditPage=' + isEditPage() + ' isRatesPage=' + isRatesPage(), '#585b70');
 
         // If we landed on an edit page, fill inputs and save, then go back to the view page
         if (isEditPage()) {
@@ -708,9 +716,11 @@
     // ── Init ──────────────────────────────────────────────────────────────────
 
     function init() {
-        console.log('[SBF RateUpdater] init');
+        var href = decodeURIComponent(window.location.href);
+        console.log('[SBF RateUpdater] init href=' + href);
         var state = loadState();
         if (state) {
+            console.log('[SBF RateUpdater] state found, isRates=' + isRatesPage() + ' isEdit=' + isEditPage());
             // Resume automatically on both rates pages and edit pages
             if (isRatesPage() || isEditPage()) {
                 buildPanel(state);
