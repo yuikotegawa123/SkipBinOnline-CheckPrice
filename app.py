@@ -710,10 +710,6 @@ elif page == "BookABin":
             # Update Price section
             # ---------------------------------------------------------------
             st.subheader("💲 Update Price")
-            st.caption(
-                "Rule: **General Waste & Green Garden Waste** → price − 1 for ≤ 12 m³ and 15, 16, 20, 30 m³  |  "
-                "all other waste types → price unchanged"
-            )
 
             # Only these two waste types get price-1
             _MINUS1_WTS    = {'General Waste', 'Green Garden Waste'}
@@ -1567,10 +1563,6 @@ elif page == "SkipBinFinder":
             # Update Price section
             # ---------------------------------------------------------------
             st.subheader("💲 Update Price")
-            st.caption(
-                "Rule: **General Waste & Green Garden Waste** → price − 1 for ≤ 12 m³ and 15, 16, 20, 30 m³  |  "
-                "all other waste types → price unchanged"
-            )
 
             _SBF_MINUS1_WTS = {'General Waste', 'Green Garden Waste'}
             _SBF_EXTRA_SZFS = {15.0, 16.0, 20.0, 30.0}
