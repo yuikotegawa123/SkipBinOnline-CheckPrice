@@ -338,14 +338,23 @@
 
     async function updateAllGroupsOnPage(priceMap) {
         // On the edit page all inputs are already rendered — no edit-icon click needed.
+        // All bin rows share ONE <form>, so we must fill every row FIRST, then submit once.
         var groups = findBinGroups();
         if (!groups.length) {
             log('  No bin groups found on page!', '#f38ba8');
+            // Debug: dump first 8 rows so we can see what text they contain
+            var dbgRows = getAllTableRows();
+            log('  [debug] total rows=' + dbgRows.length, '#585b70');
+            dbgRows.slice(0, 8).forEach(function(r, ri) {
+                log('  [debug] row[' + ri + ']: "' + r.innerText.replace(/\s+/g, ' ').trim().substring(0, 100) + '"', '#585b70');
+            });
             return 0;
         }
         log('  Bin groups found: ' + groups.length + ', priceMap keys: ' + JSON.stringify(Object.keys(priceMap || {})), '#a6adc8');
 
+        // ── Pass 1: fill all price + stock inputs (no save yet) ───────────────
         var done = 0;
+        var firstSaveBtn = null;
         for (var j = 0; j < groups.length; j++) {
             if (stopFlag) return done;
             var g     = groups[j];
@@ -359,14 +368,14 @@
 
             log('  ' + g.size + 'm\u00b3' + (price !== undefined ? ' -> $' + price : '') + (stock !== null ? '  stock=' + stock : ''));
 
-            // ── 1. Fill price inputs in the price row ─────────────────────────
+            // Fill price inputs
             if (price !== undefined && price !== null) {
                 var priceInputs = getEditableInputs(g.priceRow);
                 priceInputs.forEach(function(inp) { fillInput(inp, price); });
                 log('    price: ' + priceInputs.length + ' cell(s) -> $' + price, '#a6adc8');
             }
 
-            // ── 2. Fill stock inputs in the adjacent stock row ────────────────
+            // Fill stock inputs
             if (stock !== null && g.stockRow) {
                 var stockInputs = getEditableInputs(g.stockRow);
                 stockInputs.forEach(function(inp) { fillInput(inp, stock); });
@@ -375,24 +384,35 @@
                 log('    stock row not found', '#fab387');
             }
 
-            // ── 3. Click the per-row save button ──────────────────────────────
-            var saveBtn = g.saveInput;
-            if (!saveBtn) {
-                // Fallback: any submit/image input in last td
-                var tds = g.priceRow.querySelectorAll('td');
-                var lastTd = tds.length ? tds[tds.length - 1] : null;
-                saveBtn = lastTd ? lastTd.querySelector('input[type="submit"], input[type="image"], input[type="button"]') : null;
+            // Collect first save button found (used for final submit)
+            if (!firstSaveBtn) {
+                var saveCandidate = g.saveInput;
+                if (!saveCandidate) {
+                    var tds = g.priceRow.querySelectorAll('td');
+                    var lastTd = tds.length ? tds[tds.length - 1] : null;
+                    saveCandidate = lastTd ? lastTd.querySelector('input[type="submit"], input[type="image"], input[type="button"]') : null;
+                }
+                if (saveCandidate) firstSaveBtn = saveCandidate;
             }
-            if (!saveBtn) {
-                log('    save button not found for ' + g.size + 'm\u00b3', '#f38ba8');
-                continue;
-            }
-            saveBtn.scrollIntoView({ block: 'center' });
-            saveBtn.click();
-            await wait(800);
-            log('    saved \u2713', '#a6e3a1');
+
             done++;
         }
+
+        if (!done) return 0;
+
+        // ── Pass 2: submit once (all rows share the same form) ────────────────
+        // Try the first per-row save button, or fall back to any submit on the page
+        var saveBtn = firstSaveBtn
+            || document.querySelector('input[type="submit"], input[type="image"][src*="save" i], button[type="submit"]');
+        if (!saveBtn) {
+            log('  save button not found — cannot submit', '#f38ba8');
+            return 0;
+        }
+        log('  Submitting form...', '#a6adc8');
+        saveBtn.scrollIntoView({ block: 'center' });
+        saveBtn.click();
+        await wait(1000);
+        log('  Saved \u2713 (' + done + ' bin(s))', '#a6e3a1');
         return done;
     }
 
@@ -534,7 +554,7 @@
         btnRow.appendChild(clr); btnRow.appendChild(run); btnRow.appendChild(stop);
         body.appendChild(btnRow);
 
-        if (!resumeState && isRatesPage()) {
+        if (isRatesPage()) {
             var probeRow = document.createElement('div'); probeRow.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;';
             var probe = document.createElement('button'); probe.textContent = 'Probe DOM';
             probe.style.cssText = 'flex:1;padding:6px;background:#45475a;color:#cdd6f4;border:none;border-radius:5px;cursor:pointer;font-size:11px;';
