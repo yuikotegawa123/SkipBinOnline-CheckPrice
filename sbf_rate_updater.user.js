@@ -28,6 +28,10 @@
         return /rates_manage/i.test(decodeURIComponent(window.location.href));
     }
 
+    function isEditPage() {
+        return /[?&]action=edit/i.test(decodeURIComponent(window.location.href));
+    }
+
     function currentPageMatchesGroup(group) {
         var url = group.url || (WASTE_URLS[group.wasteType] ? WASTE_URLS[group.wasteType] : null);
         if (!url) return true;
@@ -315,8 +319,69 @@
 
     async function updateAllGroupsOnPage(priceMap, startGroupIdx) {
         var stockVal = getDefaultStock();
-        var groups = findBinGroups();
 
+        // ── EDIT PAGE: inputs are already rendered, fill them directly ──────
+        if (isEditPage()) {
+            log('  (edit page detected — filling all inputs directly)', '#a6adc8');
+            var rows = getAllTableRows();
+            var filledPrice = 0, filledStock = 0;
+
+            for (var ri = 0; ri < rows.length; ri++) {
+                var rowTxt = rows[ri].innerText.replace(/\s+/g, ' ').trim().toLowerCase();
+
+                if (/^\s*price\s*:/.test(rowTxt) && priceMap) {
+                    // Find the bin size for this price row by scanning upward
+                    var sz = null;
+                    for (var up = ri - 1; up >= 0 && up >= ri - 5; up--) {
+                        sz = extractSizeFromText(rows[up].innerText);
+                        if (sz) break;
+                    }
+                    var price = sz !== null ? priceMap[sz] : null;
+                    // If no match by size, fall back to first price in map
+                    if (price === undefined || price === null) {
+                        var keys = Object.keys(priceMap);
+                        if (keys.length === 1) price = priceMap[keys[0]];
+                    }
+                    if (price !== null && price !== undefined) {
+                        var inputs = getEditableInputs(rows[ri]);
+                        inputs.forEach(function(inp) { fillInput(inp, price); });
+                        filledPrice += inputs.length;
+                    }
+                }
+
+                if (/^\s*stock\s*:/.test(rowTxt) && stockVal !== null) {
+                    var sinputs = getEditableInputs(rows[ri]);
+                    sinputs.forEach(function(inp) { fillInput(inp, stockVal); });
+                    filledStock += sinputs.length;
+                }
+            }
+
+            log('  price cells filled: ' + filledPrice + ', stock cells filled: ' + filledStock, '#a6adc8');
+
+            // Click save
+            var saveBtn = findSaveBtnPage();
+            if (!saveBtn) {
+                for (var si2 = 0; si2 < rows.length; si2++) {
+                    saveBtn = findSaveBtn(rows[si2]);
+                    if (saveBtn) break;
+                }
+            }
+            if (!saveBtn) {
+                try { saveBtn = await waitFor(function() { return findSaveBtnPage() || null; }, 6000); }
+                catch(e) { log('  timed out waiting for save icon.', '#f38ba8'); return 0; }
+            }
+            saveBtn.scrollIntoView({ block: 'center' });
+            var sc = (saveBtn.tagName === 'IMG' && saveBtn.parentElement && saveBtn.parentElement.tagName === 'A')
+                ? saveBtn.parentElement : saveBtn;
+            sc.click();
+            try { await waitFor(function() { return !isEditPage() ? true : null; }, 10000); } catch(e) {}
+            await wait(600);
+            log('  Saved \u2713', '#a6e3a1');
+            return 1;
+        }
+
+        // ── VIEW PAGE: find bin groups, click edit icon per group ────────────
+        var groups = findBinGroups();
         if (!groups.length) {
             log('  No bin size groups found on page!', '#f38ba8');
             return 0;
@@ -326,85 +391,30 @@
         var done = 0;
         for (var j = (startGroupIdx || 0); j < groups.length; j++) {
             if (stopFlag) return done;
-            var g       = groups[j];
-            var price   = (g.size && priceMap && priceMap[g.size] !== undefined) ? priceMap[g.size] : null;
+            var g     = groups[j];
+            var price = (g.size && priceMap && priceMap[g.size] !== undefined) ? priceMap[g.size] : null;
 
-            if (price === null && stockVal === null) { log('  ' + g.size + 'm³: nothing to set - skipping.', '#a6adc8'); continue; }
+            if (price === null && stockVal === null) { log('  ' + g.size + 'm\u00b3: nothing to set - skipping.', '#a6adc8'); continue; }
 
-            var label = g.size + 'm³';
+            var label = g.size + 'm\u00b3';
             log('  ' + label + (price !== null ? ' -> $' + price : '') + (stockVal !== null ? '  stock=' + stockVal : ''));
 
-            // Click edit icon
+            // Save state so on the edit page we know which group/price to apply
+            try {
+                var ps = loadState();
+                if (ps) { ps.itemIdx = j + 1; ps.currentPrice = price; ps.currentSize = g.size; saveState(ps); }
+            } catch(e) {}
+
+            // Click the edit icon — this navigates to the edit page
             var editBtnEl = g.editBtnEl;
             editBtnEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
             await wait(400);
             var editClick = (editBtnEl.tagName === 'IMG' && editBtnEl.parentElement && editBtnEl.parentElement.tagName === 'A')
                 ? editBtnEl.parentElement : editBtnEl;
             editClick.click();
-            await wait(800);
-
-            // After clicking edit, re-find price/stock rows (DOM may have updated)
-            var rows2 = getAllTableRows();
-            var priceRow2 = null, stockRow2 = null;
-            var scan = Math.min(rows2.length, g.headerIdx + 6);
-            for (var k = g.headerIdx; k < scan; k++) {
-                var rt = rows2[k].innerText.replace(/\s+/g, ' ').trim().toLowerCase();
-                if (!priceRow2 && /^\s*price\s*:/.test(rt)) priceRow2 = rows2[k];
-                if (!stockRow2 && /^\s*stock\s*:/.test(rt)) stockRow2 = rows2[k];
-            }
-
-            // Fill all editable inputs in Price row
-            if (price !== null && priceRow2) {
-                var priceInputs = getEditableInputs(priceRow2);
-                if (priceInputs.length) {
-                    priceInputs.forEach(function(inp) { fillInput(inp, price); });
-                    log('    price filled ' + priceInputs.length + ' cell(s)', '#a6adc8');
-                    await wait(200);
-                } else {
-                    log('    price: no editable inputs found in Price row', '#fab387');
-                }
-            }
-
-            // Fill all editable inputs in Stock row
-            if (stockVal !== null && stockRow2) {
-                var stockInputs = getEditableInputs(stockRow2);
-                if (stockInputs.length) {
-                    stockInputs.forEach(function(inp) { fillInput(inp, stockVal); });
-                    log('    stock filled ' + stockInputs.length + ' cell(s)', '#a6adc8');
-                    await wait(200);
-                } else {
-                    log('    stock: no editable inputs found in Stock row', '#fab387');
-                }
-            }
-
-            // Save progress before clicking save
-            var jCopy = j;
-            try { var ps = loadState(); if (ps) { ps.itemIdx = jCopy + 1; saveState(ps); } } catch(e) {}
-
-            // Find and click save icon
-            var saveBtn = findSaveBtn(g.editBtnEl.closest ? g.editBtnEl.closest('tr') || g.editBtnEl.parentElement : g.editBtnEl.parentElement);
-            if (!saveBtn) {
-                // Search in surrounding rows
-                for (var si = g.headerIdx; si <= Math.min(rows2.length - 1, g.headerIdx + 5); si++) {
-                    saveBtn = findSaveBtn(rows2[si]);
-                    if (saveBtn) break;
-                }
-            }
-            if (!saveBtn) {
-                try { saveBtn = await waitFor(function() { return findSaveBtnPage() || null; }, 6000); }
-                catch(e) { log('  ' + label + ': timed out waiting for save icon - skipping.', '#f38ba8'); continue; }
-            }
-
-            saveBtn.scrollIntoView({ block: 'center' });
-            var saveClick = (saveBtn.tagName === 'IMG' && saveBtn.parentElement && saveBtn.parentElement.tagName === 'A')
-                ? saveBtn.parentElement : saveBtn;
-            saveClick.click();
-
-            try { await waitFor(function() { return !findSaveBtnPage() ? true : null; }, 8000); } catch(e) {}
-            try { await waitForRows(); } catch(e) { await wait(2000); }
-            await wait(600);
+            // Page will navigate — script resumes via init() on the edit page
+            await wait(5000); // wait in case it's inline (not navigation)
             done++;
-            log('    Saved ✓', '#a6e3a1');
         }
         return done;
     }
@@ -436,6 +446,26 @@
 
         // Wait for table to load
         try { await waitForRows(); } catch(e) { log('Table load timed out.', '#f38ba8'); }
+
+        // If we landed on an edit page, fill inputs and save, then go back to the view page
+        if (isEditPage()) {
+            log('--- ' + group.wasteType + ' (edit page) ---', '#cba6f7');
+            // Reconstruct priceMap — for an edit page there's typically one bin, use currentSize if set
+            var editPriceMap = buildPriceMap(group.items);
+            // Override with the specific price saved before navigation if available
+            if (st.currentPrice !== undefined && st.currentSize !== undefined) {
+                editPriceMap = {}; editPriceMap[st.currentSize] = st.currentPrice;
+            }
+            await updateAllGroupsOnPage(editPriceMap, 0);
+            // After saving, navigate back to the view page to process remaining bin groups
+            var viewUrl = group.url || (WASTE_URLS[group.wasteType] ? WASTE_URLS[group.wasteType] : null);
+            if (viewUrl) {
+                log('Returning to view page...', '#89b4fa');
+                await wait(400);
+                window.location.href = viewUrl;
+            }
+            return;
+        }
 
         log('--- ' + group.wasteType + ' ---', '#cba6f7');
         var priceMap = buildPriceMap(group.items);
@@ -658,7 +688,13 @@
     function init() {
         console.log('[SBF RateUpdater] init');
         var state = loadState();
-        if (state && !isRatesPage()) {
+        if (state) {
+            // Resume automatically on both rates pages and edit pages
+            if (isRatesPage() || isEditPage()) {
+                buildPanel(state);
+                return;
+            }
+            // On a non-rates page, navigate to the target rates page
             var gi = state.groupIdx || 0;
             var group = state.groups && state.groups[gi];
             var targetUrl = group && (group.url || (WASTE_URLS[group.wasteType] ? WASTE_URLS[group.wasteType] : null));
