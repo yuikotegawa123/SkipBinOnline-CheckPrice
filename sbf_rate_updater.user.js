@@ -281,30 +281,42 @@
     }
 
     /**
-     * Detect bin groups from the table.
-     * Structure (confirmed from XPaths):
-     *   tr[N]   = price row: contains edit icon + becomes editable after clicking
-     *   tr[N+1] = stock row: always has editable inputs
-     * The size text ("Marrel / 2 cubic metres / ...") is in the price row itself,
-     * or in the row immediately above it.
+     * Detect bin groups from the table on the EDIT page.
+     * On the edit page every bin's price row contains:
+     *   - The size text ("Marrel / X cubic metres / ...")
+     *   - Editable inputs in td[3]–td[17]
+     *   - A save <input> element in the last td (td[18])
+     * The stock row is immediately after (priceRowIdx + 1).
      */
     function findBinGroups() {
         var rows = getAllTableRows();
         var groups = [];
 
         for (var i = 0; i < rows.length; i++) {
-            var editBtnEl = findEditBtn(rows[i]);
-            if (!editBtnEl) continue;
-
-            // Extract size from this row or the row above
             var sz = extractSizeFromText(rows[i].innerText);
-            if (!sz && i > 0) sz = extractSizeFromText(rows[i - 1].innerText);
             if (!sz) continue;
 
-            // Stock row is the row immediately after the price row
+            // On view page: look for edit anchor/img
+            var editBtnEl = findEditBtn(rows[i]);
+
+            // On edit page: the last td contains a save input instead of the edit anchor
+            var tds = rows[i].querySelectorAll('td');
+            var lastTd = tds.length ? tds[tds.length - 1] : null;
+            var saveInput = lastTd ? (lastTd.querySelector('input[type="submit"], input[type="image"], input[type="button"]') ||
+                lastTd.querySelector('input')) : null;
+            // Exclude if it's the edit img (view page)
+            if (saveInput && saveInput.tagName === 'IMG') saveInput = null;
+
             var stockRow = (i + 1 < rows.length) ? rows[i + 1] : null;
 
-            groups.push({ size: sz, priceRow: rows[i], priceRowIdx: i, stockRow: stockRow, editBtnEl: editBtnEl });
+            groups.push({
+                size: sz,
+                priceRow: rows[i],
+                priceRowIdx: i,
+                stockRow: stockRow,
+                editBtnEl: editBtnEl,
+                saveInput: saveInput
+            });
         }
         return groups;
     }
@@ -425,33 +437,46 @@
         var gi     = st.groupIdx || 0;
         var group  = groups[gi];
 
-        // Navigate to the waste type page if not already there
-        if (!currentPageMatchesGroup(group)) {
-            var targetUrl = group.url || (WASTE_URLS[group.wasteType] ? WASTE_URLS[group.wasteType] : null);
-            if (targetUrl) {
-                log('Navigating to ' + group.wasteType + '...', '#89b4fa');
+        // ── Derive edit URL from view URL ─────────────────────────────────────
+        // view URL:  rates_manage.php?min_date=YYYY-MM-DD
+        // edit URL:  rates_manage.php?action=edit&min_date=YYYY-MM-DD
+        function toEditUrl(url) {
+            if (!url) return null;
+            if (/[?&]action=edit/i.test(url)) return url;
+            return url.indexOf('?') !== -1
+                ? url.replace('?', '?action=edit&')
+                : url + '?action=edit';
+        }
+
+        var viewUrl = group.url || (WASTE_URLS[group.wasteType] ? WASTE_URLS[group.wasteType] : null);
+        var editUrl = toEditUrl(viewUrl);
+
+        // ── Navigate to edit page if not already there ────────────────────────
+        if (!isEditPage() || !currentPageMatchesGroup(group)) {
+            if (editUrl) {
+                log('Navigating to edit page for ' + group.wasteType + '...', '#89b4fa');
                 saveState(st);
                 await wait(400);
-                window.location.href = targetUrl;
+                window.location.href = editUrl;
                 return;
             }
         }
 
-        // Wait for table rows to load
+        // ── We are on the edit page ───────────────────────────────────────────
         try { await waitForRows(); } catch(e) { log('Table load timed out.', '#f38ba8'); }
         log('[debug] href=' + decodeURIComponent(window.location.href), '#585b70');
 
         log('--- ' + group.wasteType + ' ---', '#cba6f7');
         var priceMap = buildPriceMap(group.items);
-        var done = await updateAllGroupsOnPage(priceMap, 0);
+        var done = await updateAllGroupsOnPage(priceMap);
         log(group.wasteType + ': ' + done + ' bin(s) updated.', '#a6e3a1');
 
         gi++;
         if (!stopFlag && gi < groups.length) {
             var nextGroup = groups[gi];
             var nextWt    = nextGroup.wasteType;
-            var nextUrl   = nextGroup.url || (WASTE_URLS[nextWt] ? WASTE_URLS[nextWt] : null);
-            if (!nextUrl) {
+            var nextEditUrl = toEditUrl(nextGroup.url || (WASTE_URLS[nextWt] ? WASTE_URLS[nextWt] : null));
+            if (!nextEditUrl) {
                 log('No URL for: ' + nextWt + ' - skipping.', '#f38ba8');
                 st.groupIdx = gi + 1;
                 saveState(st);
@@ -462,7 +487,7 @@
             saveState(st);
             log('Navigating to ' + nextWt + '...', '#89b4fa');
             await wait(600);
-            window.location.href = nextUrl;
+            window.location.href = nextEditUrl;
             return;
         }
 
@@ -656,17 +681,21 @@
         console.log('[SBF RateUpdater] init href=' + href);
         var state = loadState();
         if (state) {
+            // Resume on both view pages and edit pages
             if (isRatesPage()) {
                 buildPanel(state);
                 return;
             }
-            // On a non-rates page, navigate to the target rates page
+            // On a non-rates page, navigate to the edit page for current group
             var gi = state.groupIdx || 0;
             var group = state.groups && state.groups[gi];
-            var targetUrl = group && (group.url || (WASTE_URLS[group.wasteType] ? WASTE_URLS[group.wasteType] : null));
-            if (targetUrl) {
+            var baseUrl = group && (group.url || (WASTE_URLS[group.wasteType] ? WASTE_URLS[group.wasteType] : null));
+            if (baseUrl) {
+                var editUrl = baseUrl.indexOf('?') !== -1
+                    ? baseUrl.replace('?', '?action=edit&')
+                    : baseUrl + '?action=edit';
                 buildPanel(state);
-                setTimeout(function() { window.location.href = targetUrl; }, 600);
+                setTimeout(function() { window.location.href = editUrl; }, 600);
                 return;
             }
         }
