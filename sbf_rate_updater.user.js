@@ -336,9 +336,8 @@
         return map;
     }
 
-    async function updateAllGroupsOnPage(priceMap, startGroupIdx) {
-        // Editing is inline — clicking the edit icon makes the row's cells editable
-        // without any page navigation. The save button appears in the same row.
+    async function updateAllGroupsOnPage(priceMap) {
+        // On the edit page all inputs are already rendered — no edit-icon click needed.
         var groups = findBinGroups();
         if (!groups.length) {
             log('  No bin groups found on page!', '#f38ba8');
@@ -347,7 +346,7 @@
         log('  Bin groups found: ' + groups.length + ', priceMap keys: ' + JSON.stringify(Object.keys(priceMap || {})), '#a6adc8');
 
         var done = 0;
-        for (var j = (startGroupIdx || 0); j < groups.length; j++) {
+        for (var j = 0; j < groups.length; j++) {
             if (stopFlag) return done;
             var g     = groups[j];
             var price = (priceMap && priceMap[g.size] !== undefined) ? priceMap[g.size] : undefined;
@@ -360,64 +359,37 @@
 
             log('  ' + g.size + 'm\u00b3' + (price !== undefined ? ' -> $' + price : '') + (stock !== null ? '  stock=' + stock : ''));
 
-            // ── 1. Click the edit icon ────────────────────────────────────────
-            var editEl = g.editBtnEl;
-            editEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
-            await wait(300);
-            var editClick = (editEl.tagName === 'IMG' && editEl.parentElement && editEl.parentElement.tagName === 'A')
-                ? editEl.parentElement : editEl;
-            editClick.click();
-
-            // ── 2. Wait for price-row inputs to become editable ───────────────
-            var priceRow = g.priceRow;
-            try {
-                await waitFor(function() { return getEditableInputs(priceRow).length > 0 ? true : null; }, 6000);
-            } catch(e) {
-                log('    timeout waiting for editable inputs in price row', '#f38ba8');
-                continue;
-            }
-
-            // ── 3. Fill price inputs in the price row ─────────────────────────
+            // ── 1. Fill price inputs in the price row ─────────────────────────
             if (price !== undefined && price !== null) {
-                var priceInputs = getEditableInputs(priceRow);
+                var priceInputs = getEditableInputs(g.priceRow);
                 priceInputs.forEach(function(inp) { fillInput(inp, price); });
                 log('    price: ' + priceInputs.length + ' cell(s) -> $' + price, '#a6adc8');
             }
 
-            // ── 4. Fill stock inputs in the adjacent stock row ────────────────
-            if (stock !== null) {
-                // Re-fetch rows after edit click in case the DOM mutated
-                var freshRows = getAllTableRows();
-                var stockRow = freshRows[g.priceRowIdx + 1];
-                if (stockRow) {
-                    var stockInputs = getEditableInputs(stockRow);
-                    stockInputs.forEach(function(inp) { fillInput(inp, stock); });
-                    log('    stock: ' + stockInputs.length + ' cell(s) -> ' + stock, '#a6adc8');
-                } else {
-                    log('    stock row not found', '#fab387');
-                }
+            // ── 2. Fill stock inputs in the adjacent stock row ────────────────
+            if (stock !== null && g.stockRow) {
+                var stockInputs = getEditableInputs(g.stockRow);
+                stockInputs.forEach(function(inp) { fillInput(inp, stock); });
+                log('    stock: ' + stockInputs.length + ' cell(s) -> ' + stock, '#a6adc8');
+            } else if (stock !== null) {
+                log('    stock row not found', '#fab387');
             }
 
-            // ── 5. Click save ─────────────────────────────────────────────────
-            var saveBtn = findSaveBtn(priceRow) || findSaveBtnPage();
+            // ── 3. Click the per-row save button ──────────────────────────────
+            var saveBtn = g.saveInput;
             if (!saveBtn) {
-                try {
-                    saveBtn = await waitFor(function() {
-                        return findSaveBtn(priceRow) || findSaveBtnPage() || null;
-                    }, 5000);
-                } catch(e) {
-                    log('    save button not found', '#f38ba8');
-                    continue;
-                }
+                // Fallback: any submit/image input in last td
+                var tds = g.priceRow.querySelectorAll('td');
+                var lastTd = tds.length ? tds[tds.length - 1] : null;
+                saveBtn = lastTd ? lastTd.querySelector('input[type="submit"], input[type="image"], input[type="button"]') : null;
+            }
+            if (!saveBtn) {
+                log('    save button not found for ' + g.size + 'm\u00b3', '#f38ba8');
+                continue;
             }
             saveBtn.scrollIntoView({ block: 'center' });
-            var saveClick = (saveBtn.tagName === 'IMG' && saveBtn.parentElement && saveBtn.parentElement.tagName === 'A')
-                ? saveBtn.parentElement : saveBtn;
-            saveClick.click();
-
-            // ── 6. Wait for inputs to go away (edit committed) ────────────────
-            try { await waitFor(function() { return getEditableInputs(priceRow).length === 0 ? true : null; }, 8000); } catch(e) {}
-            await wait(400);
+            saveBtn.click();
+            await wait(800);
             log('    saved \u2713', '#a6e3a1');
             done++;
         }
