@@ -238,10 +238,19 @@
 
     // ── Update one group's items ──────────────────────────────────────────────
 
-    function getDefaultStock() {
-        var el = document.getElementById('sbf-stock');
-        var v = el ? parseInt(el.value, 10) : NaN;
-        return isNaN(v) ? null : v;
+    // Return the stock value for a given bin size (number string or number).
+    // Rules:
+    //   2m³         → 30
+    //   < 7m³ (other) → 20
+    //   7m³, 7.5m³  → 10
+    //   > 7.5m³     → null (skip stock)
+    function getStockForSize(sz) {
+        var n = parseFloat(sz);
+        if (isNaN(n)) return null;
+        if (n === 2)  return 30;
+        if (n < 7)    return 20;
+        if (n <= 7.5) return 10;
+        return null;
     }
 
     function fillInput(inp, val) {
@@ -327,7 +336,6 @@
     }
 
     async function updateAllGroupsOnPage(priceMap, startGroupIdx) {
-        var stockVal = getDefaultStock();
 
         // ── EDIT PAGE: inputs are already rendered, fill them directly ──────
         if (isEditPage()) {
@@ -360,11 +368,9 @@
                     }
                 }
 
-                if (/^\s*stock\s*:/.test(rowTxt) && stockVal !== null && currentSz !== null) {
-                    // Only fill stock for sizes that have a matching price entry
-                    var hasPriceEntry = priceMap && (priceMap[currentSz] !== undefined ||
-                        Object.keys(priceMap).length === 1);
-                    if (hasPriceEntry) {
+                if (/^\s*stock\s*:/.test(rowTxt) && currentSz !== null) {
+                    var stockVal = getStockForSize(currentSz);
+                    if (stockVal !== null) {
                         var sinputs = getEditableInputs(rows[ri]);
                         sinputs.forEach(function(inp) { fillInput(inp, stockVal); });
                         filledStock += sinputs.length;
@@ -410,11 +416,12 @@
             if (stopFlag) return done;
             var g     = groups[j];
             var price = (g.size && priceMap && priceMap[g.size] !== undefined) ? priceMap[g.size] : null;
+            var szStock = getStockForSize(g.size);
 
-            if (price === null && stockVal === null) { log('  ' + g.size + 'm\u00b3: nothing to set - skipping.', '#a6adc8'); continue; }
+            if (price === null && szStock === null) { log('  ' + g.size + 'm\u00b3: nothing to set - skipping.', '#a6adc8'); continue; }
 
             var label = g.size + 'm\u00b3';
-            log('  ' + label + (price !== null ? ' -> $' + price : '') + (stockVal !== null ? '  stock=' + stockVal : ''));
+            log('  ' + label + (price !== null ? ' -> $' + price : '') + (szStock !== null ? '  stock=' + szStock : ''));
 
             // Save state so on the edit page we know which group/price to apply
             try {
@@ -568,16 +575,11 @@
                 preview.textContent = total + ' price(s) across ' + groups.length + ' waste type(s) ready.';
             });
 
-            // Default stock input
-            var stockRow = document.createElement('div');
-            stockRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:11px;color:#a6adc8;';
-            var stockLbl = document.createElement('label'); stockLbl.textContent = 'Default Stock:';
-            stockLbl.style.cssText = 'white-space:nowrap;';
-            var stockInp = document.createElement('input'); stockInp.id = 'sbf-stock'; stockInp.type = 'number';
-            stockInp.min = '0'; stockInp.placeholder = '(leave blank to skip)';
-            stockInp.style.cssText = 'flex:1;background:#181825;color:#cdd6f4;border:1px solid #585b70;border-radius:4px;padding:4px 6px;font-size:11px;';
-            stockRow.appendChild(stockLbl); stockRow.appendChild(stockInp);
-            body.appendChild(stockRow);
+            // Stock rules display
+            var stockInfo = document.createElement('div');
+            stockInfo.style.cssText = 'font-size:10px;color:#a6adc8;margin-bottom:6px;background:#181825;border:1px solid #313244;border-radius:4px;padding:5px 8px;line-height:1.7;';
+            stockInfo.innerHTML = '<b style="color:#89dceb">Stock rules:</b> 2m³ → 30 &nbsp;|  3–6m³ → 20 &nbsp;|  7–7.5m³ → 10 &nbsp;|  >7.5m³ → skip';
+            body.appendChild(stockInfo);
         }
 
         var btnRow = document.createElement('div'); btnRow.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;';
