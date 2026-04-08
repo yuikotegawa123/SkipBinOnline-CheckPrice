@@ -1630,15 +1630,30 @@ elif page == "SkipBinFinder":
                     )
                 with _sbf_dl_col:
                     import json as _json2
+                    _SBF_WASTE_URLS = {
+                        'General Waste':       'https://www.skipbinfinder.com.au/supplier/rates_manage.php',
+                        'Mixed Heavy Waste':   'https://www.skipbinfinder.com.au/supplier/rates_manage_mixedheavy.php',
+                        'Mixed Heavy Waste (With no Soild & Dirt)': 'https://www.skipbinfinder.com.au/supplier/rates_manage_mixedheavynosoildirt.php',
+                        'Concrete / Bricks':   'https://www.skipbinfinder.com.au/supplier/rates_manage_clean.php',
+                        'Green Garden Waste':  'https://www.skipbinfinder.com.au/supplier/rates_manage_green.php',
+                        'Soil / Dirt':         'https://www.skipbinfinder.com.au/supplier/rates_manage_dirt.php',
+                    }
+                    _sbf_min_date = _dod_to_min_date(saved_dod)
                     _sbf_json_data = {}
                     for _wt2 in _sbf_update_wts:
                         _sbf_json_data[_wt2] = {}
+                        _base_url2 = _SBF_WASTE_URLS.get(_wt2, '')
+                        if _base_url2 and _sbf_min_date:
+                            _sbf_json_data[_wt2]['_url'] = _base_url2 + '?min_date=' + _sbf_min_date
                         for _sz2 in _sbf_update_szs:
                             _val2 = _sbf_price_map.get((_wt2, _sz2))
                             if _val2 is not None:
                                 _sbf_json_data[_wt2][_sz2] = _val2
                     # Include ns row in JSON export
                     _sbf_ns_export = {}
+                    _ns_base_url = _SBF_WASTE_URLS.get('Mixed Heavy Waste (With no Soild & Dirt)', '')
+                    if _ns_base_url and _sbf_min_date:
+                        _sbf_ns_export['_url'] = _ns_base_url + '?min_date=' + _sbf_min_date
                     for _sz2 in _sbf_update_szs:
                         _ns_key2 = _sz2 + "ns"
                         _ns_val2 = None
@@ -1648,7 +1663,7 @@ elif page == "SkipBinFinder":
                                 _ns_val2 = _v3b
                         if _ns_val2 is not None:
                             _sbf_ns_export[_sz2] = _ns_val2
-                    if _sbf_ns_export:
+                    if any(k != '_url' for k in _sbf_ns_export):
                         _sbf_json_data["Mixed Heavy Waste (With no Soild & Dirt)"] = _sbf_ns_export
                     _sbf_json_text = _json2.dumps(_sbf_json_data, indent=2)
                     _sbf_copy_js = f"""
