@@ -328,6 +328,11 @@ def _make_screenshot_driver():
     opts.add_argument("--disable-background-networking")
     opts.add_argument("--window-size=1280,900")
     opts.add_argument("--log-level=3")
+    opts.add_argument("--blink-settings=imagesEnabled=false")
+    opts.add_argument("--renderer-process-limit=1")
+    opts.add_argument("--js-flags=--max-old-space-size=128")
+    opts.add_argument("--disk-cache-size=1")
+    opts.add_argument("--media-cache-size=1")
     opts.add_experimental_option("excludeSwitches", ["enable-logging"])
     opts.page_load_strategy = 'normal'
     service = Service(executable_path=driver_bin) if driver_bin else Service()

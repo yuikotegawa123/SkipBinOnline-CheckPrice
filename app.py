@@ -911,7 +911,7 @@ elif page == "BestPriceSkipBins":
     st.title("💰 BestPriceSkipBins")
     st.markdown("---")
 
-    bpsb_tab_prices, bpsb_tab_signin, bpsb_tab_rates = st.tabs(["🔍 Check Price", "🔐 Sign In Information", "✏️ Update Rates"])
+    bpsb_tab_prices, bpsb_tab_signin = st.tabs(["🔍 Check Price", "🔐 Sign In Information"])
 
     # -----------------------------------------------------------------------
     # Sub-tab: Check Price
@@ -1328,128 +1328,7 @@ elif page == "BestPriceSkipBins":
                         st.session_state["bpsb_acc_unlocked"] = bpsb_unlocked
                         st.rerun()
 
-        # -----------------------------------------------------------------------
-        # Login & Screenshot section
-        # -----------------------------------------------------------------------
-        st.markdown("---")
-        st.subheader("🌐 Login & Screenshot")
-        st.caption("Log in to bestpriceskipbins.com.au/supplier/ with a saved account and take a screenshot.")
 
-        _acc_labels = [f"Account {i+1} ({bpsb_accounts[i].get('username') or 'not set'})" for i in range(3)]
-        _sel_acc = st.selectbox("Select account to log in with", _acc_labels, key="bpsb_login_acc_sel")
-        _sel_idx = int(_sel_acc.split()[1]) - 1  # "Account 1..." → index 0
-
-        _login_delay = st.slider(
-            "⏱️ Page load delay after login (seconds)",
-            min_value=2, max_value=20, value=6, step=1,
-            key="bpsb_login_delay",
-            help="Increase if the dashboard hasn't finished loading in the screenshot.",
-        )
-
-        login_btn_main = st.button("🔑 Login & Take Screenshot", type="primary", key="bpsb_login_btn")
-
-        if login_btn_main:
-            _login_acc = bpsb_accounts[_sel_idx]
-            _login_user = _login_acc.get("username", "")
-            _login_pwd  = _login_acc.get("password", "")
-            if not _login_user or not _login_pwd:
-                st.error(f"❌ {_login_acc['label']} has no username or password set. Please fill them in above first.")
-            else:
-                with st.spinner(f"🔑 Logging in as {_login_acc['label']} ({_login_user})… waiting {_login_delay}s for page to load"):
-                    _ok, _msg, _shot = BPSB.login(_login_user, _login_pwd, login_delay=_login_delay)
-                if _ok:
-                    st.success(f"✅ {_msg}")
-                else:
-                    st.error(f"❌ {_msg}")
-                if _shot:
-                    st.image(_shot, caption=f"Screenshot — {_login_acc['label']} ({_login_user})", width='stretch')
-
-    # -----------------------------------------------------------------------
-    # Sub-tab: Update Rates
-    # -----------------------------------------------------------------------
-    with bpsb_tab_rates:
-        st.subheader("✏️ Update Rates — bestpriceskipbins.com.au")
-        st.caption("Log in once and update all bin sizes under 7.5 m³ in a single run.")
-        st.markdown("---")
-
-        _rate_acc_labels = [f"Account {i+1} ({bpsb_accounts[i].get('username') or 'not set'})" for i in range(3)]
-        _rate_sel = st.selectbox("Account", _rate_acc_labels, key="bpsb_rate_acc_sel")
-        _rate_idx = int(_rate_sel.split()[1]) - 1
-
-        _rate_waste_urls = {
-            "General Waste":                    "https://bestpriceskipbins.com.au/supplier/rates_manage.php",
-            "Mixed Heavy Waste":                "https://bestpriceskipbins.com.au/supplier/rates_manage_mhw.php",
-            "Mixed Heavy Waste (No Soil/Dirt)": "https://bestpriceskipbins.com.au/supplier/rates_manage_mhwns.php",
-            "Concrete / Bricks":                "https://bestpriceskipbins.com.au/supplier/rates_manage_conc.php",
-            "Green Waste":                      "https://bestpriceskipbins.com.au/supplier/rates_manage_green.php",
-            "Dirt / Soil":                      "https://bestpriceskipbins.com.au/supplier/rates_manage_dirt.php",
-        }
-        _rate_waste = st.selectbox("Waste Type", list(_rate_waste_urls.keys()), key="bpsb_rate_waste")
-
-        st.markdown("##### Enter new prices for bin sizes < 7.5 m³")
-        st.caption("Leave a field blank to skip that size. Sizes are updated in order, one login session.")
-
-        # (bin size label, sequential row id on the rates page)
-        _lt75_sizes = ["2", "3", "4", "5", "6", "7"]
-        _price_inputs = {}
-        _size_cols = st.columns(3)
-        for _ci, sz in enumerate(_lt75_sizes):
-            with _size_cols[_ci % 3]:
-                _price_inputs[sz] = st.text_input(
-                    f"{sz} m³",
-                    value="",
-                    key=f"bpsb_rate_price_{sz}",
-                    placeholder="e.g. 189",
-                )
-
-        _rate_r1, _rate_r2 = st.columns(2)
-        with _rate_r1:
-            _rate_login_delay = st.slider(
-                "⏱️ Login delay (s)", min_value=2, max_value=20, value=6, step=1, key="bpsb_rate_login_delay"
-            )
-        with _rate_r2:
-            _rate_edit_delay = st.slider(
-                "⏱️ Per-row delay (s)", min_value=1, max_value=10, value=3, step=1, key="bpsb_rate_edit_delay",
-                help="Wait time after navigating to each row's edit page before interacting."
-            )
-
-        _rate_btn = st.button("✏️ Update All Sizes < 7.5 m³", type="primary", key="bpsb_rate_btn")
-
-        if _rate_btn:
-            _racc = bpsb_accounts[_rate_idx]
-            _ruser = _racc.get("username", "")
-            _rpwd  = _racc.get("password", "")
-            if not _ruser or not _rpwd:
-                st.error(f"❌ {_racc['label']} has no username or password set. Fill them in the Sign In tab first.")
-            else:
-                _updates = [
-                    (sz, _price_inputs[sz].strip())
-                    for sz in _lt75_sizes
-                    if _price_inputs[sz].strip()
-                ]
-                if not _updates:
-                    st.warning("⚠️ Enter at least one price before updating.")
-                else:
-                    _summary_preview = "  |  ".join(
-                        f"{sz} m³ → ${_price_inputs[sz].strip()}"
-                        for sz in _lt75_sizes if _price_inputs[sz].strip()
-                    )
-                    with st.spinner(
-                        f"✏️ Logging in as {_racc['label']} and updating {len(_updates)} size(s): {_summary_preview}…"
-                    ):
-                        _rok, _rmsg, _rshot = BPSB.update_multiple_rates(
-                            _ruser, _rpwd,
-                            updates=_updates,
-                            rates_url=_rate_waste_urls[_rate_waste],
-                            login_delay=_rate_login_delay,
-                            edit_delay=_rate_edit_delay,
-                        )
-                    if _rok:
-                        st.success(f"✅ Done!  {_rmsg}")
-                    else:
-                        st.error(f"❌ {_rmsg}")
-                    if _rshot:
-                        st.image(_rshot, caption="Screenshot after all updates", width='stretch')
 
 # ===========================================================================
 # PAGE: SkipBinFinder
@@ -1790,7 +1669,7 @@ elif page == "SkipBinsOnline":
     st.title("🌐 SkipBinsOnline")
     st.markdown("---")
 
-    sbo_tab_prices, sbo_tab_signin, sbo_tab_rates = st.tabs(["🔍 Check Price", "🔐 Sign In Information", "✏️ Update Rates"])
+    sbo_tab_prices, sbo_tab_signin = st.tabs(["🔍 Check Price", "🔐 Sign In Information"])
 
     # -----------------------------------------------------------------------
     # Sub-tab: Check Price
@@ -2173,122 +2052,4 @@ elif page == "SkipBinsOnline":
                         st.session_state["sbo_acc_unlocked"] = sbo_unlocked
                         st.rerun()
 
-        st.markdown("---")
-        st.subheader("🌐 Login & Screenshot")
-        st.caption("Log in to the SkipBinsOnline supplier portal with a saved account and take a screenshot.")
 
-        _sbo_acc_labels = [f"Account {i+1} ({sbo_accounts[i].get('username') or 'not set'})" for i in range(3)]
-        _sbo_sel_acc = st.selectbox("Select account to log in with", _sbo_acc_labels, key="sbo_login_acc_sel")
-        _sbo_sel_idx = int(_sbo_sel_acc.split()[1]) - 1
-
-        _sbo_login_delay = st.slider(
-            "⏱️ Page load delay after login (seconds)",
-            min_value=2, max_value=20, value=6, step=1,
-            key="sbo_login_delay",
-            help="Increase if the dashboard hasn't finished loading in the screenshot.",
-        )
-
-        sbo_login_btn = st.button("🔑 Login & Take Screenshot", type="primary", key="sbo_login_btn")
-
-        if sbo_login_btn:
-            _sbo_login_acc  = sbo_accounts[_sbo_sel_idx]
-            _sbo_login_user = _sbo_login_acc.get("username", "")
-            _sbo_login_pwd  = _sbo_login_acc.get("password", "")
-            if not _sbo_login_user or not _sbo_login_pwd:
-                st.error(f"❌ {_sbo_login_acc['label']} has no username or password set. Please fill them in above first.")
-            else:
-                with st.spinner(f"🔑 Logging in as {_sbo_login_acc['label']} ({_sbo_login_user})… waiting {_sbo_login_delay}s for page to load"):
-                    _ok, _msg, _shot = SBO.login(_sbo_login_user, _sbo_login_pwd, login_delay=_sbo_login_delay)
-                if _ok:
-                    st.success(f"✅ {_msg}")
-                else:
-                    st.error(f"❌ {_msg}")
-                if _shot:
-                    st.image(_shot, caption=f"Screenshot — {_sbo_login_acc['label']} ({_sbo_login_user})", width='stretch')
-
-    # -----------------------------------------------------------------------
-    # Sub-tab: Update Rates
-    # -----------------------------------------------------------------------
-    with sbo_tab_rates:
-        st.subheader("✏️ Update Rates — skipbinsonline.com.au")
-        st.caption("Log in once and update bin sizes in a single run.")
-        st.markdown("---")
-
-        _sbo_rate_acc_labels = [f"Account {i+1} ({sbo_accounts[i].get('username') or 'not set'})" for i in range(3)]
-        _sbo_rate_sel = st.selectbox("Account", _sbo_rate_acc_labels, key="sbo_rate_acc_sel")
-        _sbo_rate_idx = int(_sbo_rate_sel.split()[1]) - 1
-
-        _sbo_rate_waste = st.selectbox("Waste Type", list(SBO.WASTE_TYPE_RATES_URLS.keys()), key="sbo_rate_waste")
-
-        _sbo_rate_start_date = st.text_input(
-            "Start Date (D/MM/YYYY)",
-            value=st.session_state.get("sbo_search_dod", ""),
-            key="sbo_rate_start_date",
-            help="Schedule start date for the rates page (e.g. 8/04/2026). Leave blank to omit the startDate parameter.",
-        )
-
-        st.markdown("##### Enter new prices for bin sizes < 7.5 m³")
-        st.caption("Leave a field blank to skip that size. Sizes are updated in one login session.")
-
-        _sbo_lt75_sizes = ["1.5", "2", "2.5", "3", "3.5", "4", "5", "5.5", "6", "7"]
-        _sbo_price_inputs = {}
-        _sbo_size_cols = st.columns(5)
-        for _ci, sz in enumerate(_sbo_lt75_sizes):
-            with _sbo_size_cols[_ci % 5]:
-                _sbo_price_inputs[sz] = st.text_input(
-                    f"{sz} m³",
-                    value="",
-                    key=f"sbo_rate_price_{sz}",
-                    placeholder="e.g. 189",
-                )
-
-        _sbo_r1, _sbo_r2 = st.columns(2)
-        with _sbo_r1:
-            _sbo_rate_login_delay = st.slider(
-                "⏱️ Login delay (s)", min_value=2, max_value=20, value=6, step=1, key="sbo_rate_login_delay"
-            )
-        with _sbo_r2:
-            _sbo_rate_edit_delay = st.slider(
-                "⏱️ Per-row delay (s)", min_value=1, max_value=10, value=3, step=1, key="sbo_rate_edit_delay",
-                help="Wait time after navigating to each row's edit page before interacting."
-            )
-
-        _sbo_rate_btn = st.button("✏️ Update Sizes", type="primary", key="sbo_rate_btn")
-
-        if _sbo_rate_btn:
-            _sbo_racc  = sbo_accounts[_sbo_rate_idx]
-            _sbo_ruser = _sbo_racc.get("username", "")
-            _sbo_rpwd  = _sbo_racc.get("password", "")
-            if not _sbo_ruser or not _sbo_rpwd:
-                st.error(f"❌ {_sbo_racc['label']} has no username or password set. Fill them in the Sign In tab first.")
-            else:
-                _sbo_updates = [
-                    (sz, _sbo_price_inputs[sz].strip())
-                    for sz in _sbo_lt75_sizes
-                    if _sbo_price_inputs[sz].strip()
-                ]
-                if not _sbo_updates:
-                    st.warning("⚠️ Enter at least one price before updating.")
-                else:
-                    _sbo_summary_preview = "  |  ".join(
-                        f"{sz} m³ → ${_sbo_price_inputs[sz].strip()}"
-                        for sz in _sbo_lt75_sizes if _sbo_price_inputs[sz].strip()
-                    )
-                    with st.spinner(
-                        f"✏️ Logging in as {_sbo_racc['label']} and updating {len(_sbo_updates)} size(s): {_sbo_summary_preview}…"
-                    ):
-                        _sbo_rok, _sbo_rmsg, _sbo_rshots = SBO.update_multiple_rates(
-                            _sbo_ruser, _sbo_rpwd,
-                            updates=_sbo_updates,
-                            rates_url=SBO.WASTE_TYPE_RATES_URLS[_sbo_rate_waste],
-                            login_delay=_sbo_rate_login_delay,
-                            edit_delay=_sbo_rate_edit_delay,
-                            start_date=_dod_to_sbo_date(_sbo_rate_start_date) or None,
-                            waste_type=_sbo_rate_waste,
-                        )
-                    if _sbo_rok:
-                        st.success(f"✅ Done!  {_sbo_rmsg}")
-                    else:
-                        st.error(f"❌ {_sbo_rmsg}")
-                    for _shot in (_sbo_rshots or []):
-                        st.image(_shot, caption="Final result", width='stretch')
