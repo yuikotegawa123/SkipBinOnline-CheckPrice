@@ -392,3 +392,100 @@ def run_search(postcode, dod, pud, cell_q, status_q, done_event):
                 _log(f"[SBF] Thread exception: {exc}")
 
     done_event.set()
+
+
+# ---------------------------------------------------------------------------
+# Supplier login  (Selenium)
+# ---------------------------------------------------------------------------
+
+def _make_screenshot_driver():
+    """Build a Chrome driver with images enabled (for login/screenshot use)."""
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
+
+    chrome_bin, driver_bin = _bundled_chrome_paths()
+    opts = Options()
+    if chrome_bin:
+        opts.binary_location = chrome_bin
+    opts.add_argument("--headless=new")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--disable-extensions")
+    opts.add_argument("--disable-default-apps")
+    opts.add_argument("--no-first-run")
+    opts.add_argument("--disable-sync")
+    opts.add_argument("--disable-background-networking")
+    opts.add_argument("--window-size=1280,900")
+    opts.add_argument("--log-level=3")
+    opts.add_experimental_option("excludeSwitches", ["enable-logging"])
+    opts.page_load_strategy = 'normal'
+    service = Service(executable_path=driver_bin) if driver_bin else Service()
+    return webdriver.Chrome(service=service, options=opts)
+
+
+def login(username: str, password: str, login_delay: float = 5.0):
+    """
+    Log in to https://www.skipbinfinder.com.au/supplier/ using Selenium.
+    login_delay : seconds to wait after clicking Login before taking the screenshot.
+    Returns (success: bool, message: str, screenshot: bytes | None).
+    """
+    import time
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+
+    driver = _make_screenshot_driver()
+    try:
+        driver.get("https://www.skipbinfinder.com.au/supplier/")
+        wait = WebDriverWait(driver, 15)
+        pwd_input = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']")))
+
+        try:
+            user_input = driver.find_element(
+                By.XPATH,
+                "//input[@type='password']/preceding::input[@type='text' or @type='email' or @type='number' or @type='tel'][1]",
+            )
+        except Exception:
+            inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[type='email'], input[type='number'], input[type='tel']")
+            user_input = inputs[-1] if inputs else None
+
+        if user_input is None:
+            shot = driver.get_screenshot_as_png()
+            return False, "Could not find username input field.", shot
+
+        user_input.clear()
+        user_input.send_keys(username)
+        pwd_input.clear()
+        pwd_input.send_keys(password)
+
+        try:
+            login_btn = wait.until(EC.element_to_be_clickable(
+                (By.XPATH,
+                 "//input[@type='submit'] | //button[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'LOGIN')]")
+            ))
+        except Exception:
+            login_btn = driver.find_element(By.XPATH, "//input[@type='submit']")
+
+        driver.execute_script("arguments[0].click();", login_btn)
+        time.sleep(login_delay)
+
+        shot = driver.get_screenshot_as_png()
+        src = driver.page_source.lower()
+        if any(k in src for k in ("log out", "logout", "sign out", "welcome", "dashboard", "my account", "supplier dashboard")):
+            return True, "Logged in successfully!", shot
+        if any(k in src for k in ("invalid", "incorrect", "error", "failed", "wrong password")):
+            return False, "Login failed — invalid credentials.", shot
+        return True, "Login submitted — see screenshot.", shot
+    except Exception as exc:
+        try:
+            shot = driver.get_screenshot_as_png()
+        except Exception:
+            shot = None
+        return False, f"Error during login: {exc}", shot
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
