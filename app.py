@@ -1555,6 +1555,196 @@ elif page == "SkipBinFinder":
             else:
                 st.info("Run a search first to populate the price map.")
 
+            # ---------------------------------------------------------------
+            # Edited Price section (price − 1, with queue + Edit/Undo)
+            # ---------------------------------------------------------------
+            st.markdown("---")
+            st.subheader("✏️ Edited Price (< 7.5 m³,  price − 1)")
+
+            _sbf_accs = st.session_state.get("sbf_accounts", [])
+            _sbf_matched = [
+                a for a in _sbf_accs
+                if a.get("postcode", "").strip() == saved_pc.strip() and a.get("username", "").strip()
+            ]
+            _sbf_unmatched = [
+                a for a in _sbf_accs
+                if a.get("postcode", "").strip() != saved_pc.strip() and a.get("username", "").strip()
+            ]
+            if _sbf_matched:
+                st.success(
+                    "**Accounts linked to postcode " + saved_pc + ":** "
+                    + "  |  ".join(f"✅ {a['label']}: `{a['username']}`" for a in _sbf_matched)
+                )
+            else:
+                st.warning(f"⚠️ No saved account has postcode **{saved_pc}**.")
+            if _sbf_unmatched:
+                st.caption(
+                    "Other accounts: "
+                    + "  |  ".join(f"{a['label']}: `{a['username']}` (postcode {a.get('postcode') or 'not set'})" for a in _sbf_unmatched)
+                )
+
+            _sbf_lt75 = [s for s in SBF.ALL_SIZES if not s.endswith('ns') and float(s) <= 7.5]
+            # Build orig prices from search results
+            _sbf_orig = {}
+            for _wt in SBF.WASTE_TYPES:
+                _sbf_orig[_wt] = {}
+                for _sz in _sbf_lt75:
+                    _pr = sbf_results.get(_wt, {}).get(_sz)
+                    if isinstance(_pr, (int, float)):
+                        _sbf_orig[_wt][_sz] = _pr
+            # ns variants (Mixed Heavy Waste no soil)
+            for _wt in SBF.WASTE_TYPES:
+                for _sz in _sbf_lt75:
+                    _ns_key = _sz + "ns"
+                    _ns_pr = sbf_results.get(_wt, {}).get(_ns_key)
+                    if isinstance(_ns_pr, (int, float)):
+                        _sbf_orig.setdefault("Mixed Heavy Waste (With no Soild & Dirt)", {})[_sz] = _ns_pr
+
+            def _sbf_edit_sizes_for(wt):
+                return [s for s in _sbf_lt75 if s in _sbf_orig.get(wt, {})]
+
+            if not any(_sbf_orig.get(wt) for wt in _sbf_orig):
+                st.info("Run a price search above to populate the Edited Price table.")
+            else:
+                _sbf_edit_acc = _sbf_matched[0] if _sbf_matched else None
+                _sbf_wt_list = [wt for wt in _sbf_orig if _sbf_edit_sizes_for(wt)]
+                _sbf_ep_col_widths = [2] + [1] * len(_sbf_lt75) + [1, 1]
+
+                if "sbf_wt_queue" not in st.session_state:
+                    st.session_state["sbf_wt_queue"] = {}
+                _sbf_queue = st.session_state["sbf_wt_queue"]
+
+                _sbf_ep_hdr = st.columns(_sbf_ep_col_widths)
+                _sbf_ep_hdr[0].markdown("**Waste Type**")
+                for _hi, _sz in enumerate(_sbf_lt75):
+                    _sbf_ep_hdr[1 + _hi].markdown(f"**{_sz} m³**")
+                st.divider()
+
+                _sbf_edit_btns = []
+                _sbf_undo_btns = []
+                for _wt_i, _wt in enumerate(_sbf_wt_list):
+                    _row = st.columns(_sbf_ep_col_widths)
+                    _queued = _sbf_queue.get(_wt_i)
+                    _name_label = f"{'⏳ ' if _queued else ''}{_wt}{'  *(undo)*' if _queued == 'undo' else '  *(edit)*' if _queued == 'edit' else ''}"
+                    _row[0].markdown(_name_label)
+                    for _ci, _sz in enumerate(_sbf_lt75):
+                        _pr = _sbf_orig.get(_wt, {}).get(_sz)
+                        if _pr is not None:
+                            _row[1 + _ci].write(f"${_pr - 1:,.0f}")
+                        else:
+                            _row[1 + _ci].write("N/A")
+                    _sbf_edit_btns.append(_row[-2].button(
+                        "✏️ Edit", key=f"sbf_wt_edit_{_wt_i}",
+                        disabled=_sbf_edit_acc is None, width='stretch',
+                    ))
+                    _sbf_undo_btns.append(_row[-1].button(
+                        "↩️ Undo", key=f"sbf_wt_undo_{_wt_i}",
+                        disabled=_sbf_edit_acc is None, width='stretch',
+                    ))
+
+                for _wt_i, _wt in enumerate(_sbf_wt_list):
+                    if _sbf_edit_btns[_wt_i] and _sbf_edit_acc:
+                        if _sbf_queue.get(_wt_i) == "edit":
+                            del _sbf_queue[_wt_i]
+                        else:
+                            _sbf_queue[_wt_i] = "edit"
+                        st.rerun()
+                    if _sbf_undo_btns[_wt_i] and _sbf_edit_acc:
+                        if _sbf_queue.get(_wt_i) == "undo":
+                            del _sbf_queue[_wt_i]
+                        else:
+                            _sbf_queue[_wt_i] = "undo"
+                        st.rerun()
+
+                st.markdown("#### 🗂 Queue")
+                if not _sbf_queue:
+                    st.caption("No actions queued. Click ✏️ Edit or ↩️ Undo above to add.")
+                else:
+                    _q_hdr = st.columns([3, 1, 1])
+                    _q_hdr[0].markdown("**Waste Type**")
+                    _q_hdr[1].markdown("**Action**")
+                    _q_hdr[2].markdown("**Remove**")
+                    for _qi, (_q_idx, _q_action) in enumerate(list(_sbf_queue.items())):
+                        _q_wt = _sbf_wt_list[_q_idx]
+                        _qc = st.columns([3, 1, 1])
+                        _qc[0].write(_q_wt)
+                        _qc[1].write("✏️ Edit" if _q_action == "edit" else "↩️ Undo")
+                        if _qc[2].button("🗑️", key=f"sbf_q_del_{_qi}_{_q_idx}", width='stretch'):
+                            del _sbf_queue[_q_idx]
+                            st.rerun()
+
+                _sbf_last_run = st.session_state.get("sbf_last_run_summary", [])
+                if _sbf_last_run:
+                    st.markdown("#### 📋 Last Run Results")
+                    _ok_items  = [r for r in _sbf_last_run if r["ok"]]
+                    _err_items = [r for r in _sbf_last_run if not r["ok"]]
+                    if _ok_items:
+                        st.success("**Done:**\n" + "\n".join(f"- {r['msg']}" for r in _ok_items))
+                    if _err_items:
+                        st.error("**Failed:**\n" + "\n".join(f"- {r['msg']}" for r in _err_items))
+                    for _rr in _sbf_last_run:
+                        for _si, _shot in enumerate(_rr.get("screenshots") or []):
+                            st.image(_shot, caption=f"Final result — {_rr['msg'][:60]}", width='stretch')
+                    if st.button("✖ Clear results", key="sbf_clear_results"):
+                        st.session_state["sbf_last_run_summary"] = []
+                        st.rerun()
+                    st.markdown("---")
+
+                def _run_sbf_wt_edit(wt, undo=False):
+                    idx      = _sbf_wt_list.index(wt)
+                    wt_sizes = _sbf_edit_sizes_for(wt)
+                    if undo:
+                        wt_updates = [(s, str(int(_sbf_orig[wt][s]))) for s in wt_sizes]
+                    else:
+                        wt_updates = [(s, str(int(_sbf_orig[wt][s]) - 1)) for s in wt_sizes]
+                    if not wt_updates:
+                        result = {"ok": False, "msg": f"{wt}: No priced sizes < 7.5 m³ found."}
+                        st.session_state[f"sbf_wt_result_{idx}"] = result
+                        st.session_state.setdefault("sbf_last_run_summary", []).append(result)
+                        return
+                    ok, msg, shots = SBF.update_waste_type_rates(
+                        _sbf_edit_acc["username"], _sbf_edit_acc["password"],
+                        waste_type=wt, updates=wt_updates,
+                        min_date=_dod_to_min_date(saved_dod) or None,
+                        login_delay=6, edit_delay=3,
+                    )
+                    result = {"ok": ok, "msg": f"{wt} — {msg}", "screenshots": shots}
+                    st.session_state[f"sbf_wt_result_{idx}"] = result
+                    st.session_state.setdefault("sbf_last_run_summary", []).append(result)
+
+                if _sbf_edit_acc:
+                    import concurrent.futures as _sbf_cf
+                    _sbf_btn_row = st.columns([1, 1, 1, 5])
+                    _sbf_run_queue_btn = _sbf_btn_row[0].button(
+                        f"▶ Run Queue ({len(_sbf_queue)})" if _sbf_queue else "▶ Run Queue",
+                        key="sbf_run_queue",
+                        disabled=not _sbf_queue,
+                        width='stretch',
+                    )
+                    _sbf_edit_all = _sbf_btn_row[1].button("✏️ Edit All", key="sbf_edit_all", width='stretch')
+                    _sbf_undo_all = _sbf_btn_row[2].button("↩️ Undo All", key="sbf_undo_all", width='stretch')
+
+                    if _sbf_run_queue_btn and _sbf_queue:
+                        _items = list(_sbf_queue.items())
+                        _wts_to_run = [(_sbf_wt_list[i], v == "undo") for i, v in _items]
+                        st.session_state["sbf_last_run_summary"] = []
+                        with st.spinner(f"Running {len(_wts_to_run)} queued item(s) in parallel…"):
+                            with _sbf_cf.ThreadPoolExecutor(max_workers=len(_wts_to_run)) as _pool:
+                                _futures = [_pool.submit(_run_sbf_wt_edit, wt, undo) for wt, undo in _wts_to_run]
+                                _sbf_cf.wait(_futures)
+                        st.session_state["sbf_wt_queue"] = {}
+                        st.rerun()
+
+                    if _sbf_edit_all or _sbf_undo_all:
+                        _is_undo = bool(_sbf_undo_all)
+                        st.session_state["sbf_last_run_summary"] = []
+                        with st.spinner(f"{'Undo' if _is_undo else 'Edit'} All: {len(_sbf_wt_list)} waste types in parallel…"):
+                            with _sbf_cf.ThreadPoolExecutor(max_workers=len(_sbf_wt_list)) as _pool:
+                                _futures = [_pool.submit(_run_sbf_wt_edit, wt, _is_undo) for wt in _sbf_wt_list]
+                                _sbf_cf.wait(_futures)
+                        st.session_state["sbf_wt_queue"] = {}
+                        st.rerun()
+
     # -----------------------------------------------------------------------
     # Sub-tab: Sign In Information  (3 saved accounts, passwords locked)
     # -----------------------------------------------------------------------
