@@ -480,6 +480,13 @@ with st.sidebar:
     if supplier_nav:
         st.session_state.page = supplier_nav
 
+    st.markdown("---")
+    st.caption("Tools")
+    if st.button("🧪  Test Action", width='stretch'):
+        st.session_state.page = "Test Action"
+        st.session_state.supplier_nav = None
+        st.rerun()
+
 page = st.session_state.page
 
 # ===========================================================================
@@ -2053,3 +2060,105 @@ elif page == "SkipBinsOnline":
                         st.rerun()
 
 
+# ===========================================================================
+# PAGE: Test Action
+# ===========================================================================
+
+elif page == "Test Action":
+    st.title("🧪 Test Action")
+    st.caption("Log in to a supplier website and take a screenshot to verify credentials.")
+    st.markdown("---")
+
+    # Supplier selection
+    _TA_SUPPLIERS = {
+        "BookABin":           {"accounts_key": "bab_accounts",  "id_field": "supplier_id", "id_label": "Supplier ID"},
+        "BestPriceSkipBins":  {"accounts_key": "bpsb_accounts", "id_field": "username",    "id_label": "Username"},
+        "SkipBinsOnline":     {"accounts_key": "sbo_accounts",  "id_field": "username",    "id_label": "Username"},
+    }
+
+    ta_col1, ta_col2 = st.columns([1, 1])
+    with ta_col1:
+        ta_supplier = st.selectbox(
+            "Supplier",
+            options=list(_TA_SUPPLIERS.keys()),
+            key="ta_supplier",
+        )
+    _ta_cfg = _TA_SUPPLIERS[ta_supplier]
+    _ta_accounts = st.session_state.get(_ta_cfg["accounts_key"], [])
+
+    # Build account labels for the dropdown
+    _ta_acc_labels = []
+    for _a in _ta_accounts:
+        _lbl = _a.get("label", "Account")
+        _uid = _a.get(_ta_cfg["id_field"], "") or "(not set)"
+        _ta_acc_labels.append(f"{_lbl}  —  {_ta_cfg['id_label']}: {_uid}")
+
+    with ta_col2:
+        ta_acc_idx = st.selectbox(
+            "Account",
+            options=list(range(len(_ta_acc_labels))),
+            format_func=lambda i: _ta_acc_labels[i],
+            key="ta_account",
+        )
+
+    _ta_selected = _ta_accounts[ta_acc_idx] if _ta_accounts else {}
+    _ta_uid = _ta_selected.get(_ta_cfg["id_field"], "")
+    _ta_pwd = _ta_selected.get("password", "")
+
+    st.markdown("---")
+
+    # Show selected account info
+    _info_col1, _info_col2, _info_col3 = st.columns(3)
+    _info_col1.metric("Supplier", ta_supplier)
+    _info_col2.metric(_ta_cfg["id_label"], _ta_uid or "(not set)")
+    _info_col3.metric("Password", "••••••••" if _ta_pwd else "(not set)")
+
+    # Login button
+    st.markdown("")
+    ta_login_btn = st.button(
+        "🔐 Log In & Take Screenshot",
+        type="primary",
+        disabled=not _ta_uid or not _ta_pwd,
+        key="ta_login_btn",
+    )
+
+    if not _ta_uid or not _ta_pwd:
+        st.warning("⚠️ Selected account has no credentials set. Go to the supplier's Sign In Information tab to configure.")
+
+    if ta_login_btn:
+        with st.spinner(f"🔐 Logging in to {ta_supplier}…"):
+            if ta_supplier == "BookABin":
+                _ok, _msg, _shot = Bookabin.login(_ta_uid, _ta_pwd)
+            elif ta_supplier == "BestPriceSkipBins":
+                _ok, _msg, _shot = BPSB.login(_ta_uid, _ta_pwd)
+            elif ta_supplier == "SkipBinsOnline":
+                _ok, _msg, _shot = SBO.login(_ta_uid, _ta_pwd)
+            else:
+                _ok, _msg, _shot = False, "Unknown supplier.", None
+
+        if _ok:
+            st.success(f"✅ {_msg}")
+        else:
+            st.error(f"❌ {_msg}")
+
+        if _shot:
+            st.image(_shot, caption=f"{ta_supplier} — Login screenshot", use_container_width=True)
+        else:
+            st.info("No screenshot captured.")
+
+    # Show previous result if stored
+    if "ta_last_screenshot" in st.session_state:
+        _prev = st.session_state["ta_last_screenshot"]
+        st.markdown("---")
+        st.subheader("📸 Last Screenshot")
+        st.caption(f"Supplier: {_prev['supplier']}  |  {_prev['message']}")
+        if _prev.get("screenshot"):
+            st.image(_prev["screenshot"], caption="Previous login screenshot", use_container_width=True)
+
+    # Persist the result for display after reruns
+    if ta_login_btn:
+        st.session_state["ta_last_screenshot"] = {
+            "supplier":   ta_supplier,
+            "message":    _msg,
+            "screenshot": _shot,
+        }
