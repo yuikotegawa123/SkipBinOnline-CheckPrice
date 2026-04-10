@@ -1733,6 +1733,131 @@ elif page == "SkipBinFinder":
             if _prev.get("screenshot"):
                 st.image(_prev["screenshot"], caption="Previous login screenshot", use_container_width=True)
 
+        # ───────────────────────────────────────────────────────────────────
+        # Test Rate Edit
+        # ───────────────────────────────────────────────────────────────────
+        st.markdown("---")
+        st.subheader("✏️ Test Rate Edit")
+        st.caption("Pick a waste type, enter sizes and prices, then push them to the supplier portal.")
+
+        import datetime as _dt
+        _today_str = _dt.date.today().strftime("%Y-%m-%d")
+
+        _SBF_TA_WASTE_TYPES = list(SBF.WASTE_TYPE_RATES_URLS.keys())
+
+        _te_col1, _te_col2 = st.columns([1, 1])
+        with _te_col1:
+            sbf_te_wt = st.selectbox(
+                "Waste Type",
+                options=_SBF_TA_WASTE_TYPES,
+                key="sbf_te_wt",
+            )
+        with _te_col2:
+            sbf_te_date = st.text_input(
+                "Min Date (YYYY-MM-DD)",
+                value=_today_str,
+                key="sbf_te_date",
+            )
+
+        # Pre-fill sizes from cached search results if available
+        _sbf_cached = st.session_state.get("sbf_results", {})
+        _sbf_cached_wt = _sbf_cached.get(sbf_te_wt, {})
+        _default_sizes = sorted(
+            [s for s in _sbf_cached_wt if isinstance(_sbf_cached_wt.get(s), (int, float))],
+            key=lambda x: float(x.replace("ns", ""))
+        ) if _sbf_cached_wt else []
+
+        st.markdown("**Enter size → price pairs to update:**")
+        st.caption("Add one row per bin size. Sizes should match what the supplier portal shows (e.g. 2, 3, 4, 5).")
+
+        # Dynamic number of rows
+        if "sbf_te_row_count" not in st.session_state:
+            st.session_state["sbf_te_row_count"] = max(len(_default_sizes), 3)
+        _n_rows = st.session_state["sbf_te_row_count"]
+
+        _te_sizes = []
+        _te_prices = []
+        for _ri in range(_n_rows):
+            _r1, _r2, _r3 = st.columns([1, 1, 0.5])
+            _def_sz = _default_sizes[_ri] if _ri < len(_default_sizes) else ""
+            _def_pr = ""
+            if _def_sz and _def_sz in _sbf_cached_wt:
+                _def_pr = str(int(_sbf_cached_wt[_def_sz]))
+            with _r1:
+                _sz = st.text_input(f"Size (m³)", value=_def_sz, key=f"sbf_te_sz_{_ri}")
+            with _r2:
+                _pr = st.text_input(f"Price ($)", value=_def_pr, key=f"sbf_te_pr_{_ri}")
+            with _r3:
+                if _ri == 0:
+                    st.caption("")  # spacing
+            _te_sizes.append(_sz.strip())
+            _te_prices.append(_pr.strip())
+
+        _btn_col1, _btn_col2, _btn_col3 = st.columns([1, 1, 2])
+        with _btn_col1:
+            if st.button("➕ Add Row", key="sbf_te_add_row"):
+                st.session_state["sbf_te_row_count"] = _n_rows + 1
+                st.rerun()
+        with _btn_col2:
+            if _n_rows > 1 and st.button("➖ Remove Row", key="sbf_te_rm_row"):
+                st.session_state["sbf_te_row_count"] = _n_rows - 1
+                st.rerun()
+
+        # Build valid updates
+        _valid_updates = []
+        for _sz, _pr in zip(_te_sizes, _te_prices):
+            if _sz and _pr:
+                try:
+                    float(_sz.replace("ns", ""))
+                    int(float(_pr))
+                    _valid_updates.append((_sz, str(int(float(_pr)))))
+                except ValueError:
+                    pass
+
+        st.markdown("")
+        sbf_te_run = st.button(
+            f"🚀 Run Edit — {sbf_te_wt} ({len(_valid_updates)} sizes)",
+            type="primary",
+            disabled=not _sbf_ta_uid or not _sbf_ta_pwd or not _valid_updates,
+            key="sbf_te_run",
+        )
+
+        if not _valid_updates:
+            st.info("Fill in at least one valid size + price row to enable editing.")
+
+        if sbf_te_run:
+            with st.spinner(f"✏️ Logging in and editing {sbf_te_wt} ({len(_valid_updates)} sizes)…"):
+                _ok, _msg, _shots = SBF.update_waste_type_rates(
+                    _sbf_ta_uid, _sbf_ta_pwd,
+                    waste_type=sbf_te_wt,
+                    updates=_valid_updates,
+                    min_date=sbf_te_date if sbf_te_date else None,
+                    login_delay=6,
+                    edit_delay=3,
+                )
+
+            if _ok:
+                st.success(f"✅ {_msg}")
+            else:
+                st.error(f"❌ {_msg}")
+
+            for _si, _shot in enumerate(_shots or []):
+                st.image(_shot, caption=f"Result screenshot #{_si+1}", use_container_width=True)
+
+            st.session_state["sbf_te_last"] = {
+                "waste_type": sbf_te_wt,
+                "message": _msg,
+                "screenshots": _shots,
+            }
+
+        elif "sbf_te_last" in st.session_state:
+            _prev_te = st.session_state["sbf_te_last"]
+            st.markdown("---")
+            st.subheader("📋 Last Edit Result")
+            st.caption(f"Waste Type: {_prev_te['waste_type']}  |  {_prev_te['message']}")
+            for _si, _shot in enumerate(_prev_te.get("screenshots") or []):
+                st.image(_shot, caption=f"Result screenshot #{_si+1}", use_container_width=True)
+
 # ===========================================================================
 # PAGE: SkipBinsOnline Sign In
 # ===========================================================================
