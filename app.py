@@ -466,6 +466,11 @@ with st.sidebar:
 
     st.button("🏠  Home", width='stretch', on_click=_go_home)
 
+    def _go_search_pc():
+        st.session_state.page = "Search by Postcode"
+        st.session_state.supplier_nav = None
+    st.button("🔍  Search by Postcode", width='stretch', on_click=_go_search_pc)
+
     st.markdown("---")
     st.caption("Suppliers Action")
 
@@ -596,6 +601,120 @@ if page == "Home":
                     st.dataframe(_to_df(sbo_res, sbo_waste, SBO.ALL_SIZES), width='stretch')
                 else:
                     st.warning("No data returned from SkipBinsOnline.")
+
+# ===========================================================================
+# PAGE: Search by Postcode
+# ===========================================================================
+
+elif page == "Search by Postcode":
+    st.title("🔍 Search by Postcode")
+    st.caption("BookABin · BestPriceSkipBins · SkipBinFinder · SkipBinsOnline — search any postcode across all four sources")
+    st.markdown("---")
+
+    _SPBC_SUPPLIER_KEYS  = ["bab", "bpsb", "sbf", "sbo"]
+    _SPBC_SUPPLIER_LABELS = {
+        "bab":  "📦 BookABin",
+        "bpsb": "💰 BestPriceSkipBins",
+        "sbf":  "🔍 SkipBinFinder",
+        "sbo":  "🌐 SkipBinsOnline",
+    }
+
+    spbc_col1, spbc_col2, spbc_col3, spbc_col4 = st.columns([1, 1.4, 1.4, 1])
+    with spbc_col1:
+        spbc_postcode = st.text_input("Postcode", value="3173", key="spbc_pc")
+    with spbc_col2:
+        spbc_dod = st.text_input("Delivery Date (D/MM/YYYY)", value="1/04/2026", key="spbc_dod")
+    with spbc_col3:
+        spbc_pud = st.text_input("Pickup Date (D/MM/YYYY)", value="8/04/2026", key="spbc_pud")
+    with spbc_col4:
+        st.write("")
+        st.write("")
+        spbc_search = st.button("🔍 Search All", width='stretch', type="primary", key="spbc_search")
+
+    if spbc_search:
+        if not spbc_postcode or not spbc_dod or not spbc_pud:
+            st.error("Please fill in all fields.")
+            st.stop()
+
+        _spbc_bpsb_dod = _parse_bpsb_date(spbc_dod)
+        _spbc_bpsb_pud = _parse_bpsb_date(spbc_pud)
+
+        _spbc_results = {}  # supplier_key -> {wt: {size: price}}
+
+        def _spbc_run_supplier(key, run_fn, *args):
+            cell_q   = queue.Queue()
+            status_q = queue.Queue()
+            done     = threading.Event()
+            threading.Thread(target=run_fn, args=(*args, cell_q, status_q, done), daemon=True).start()
+            done.wait()
+            out = {}
+            while not cell_q.empty():
+                wt, size, price = cell_q.get_nowait()
+                out.setdefault(wt, {})[size] = price
+            _spbc_results[key] = out
+
+        prog = st.progress(0, text=f"Searching postcode {spbc_postcode} …")
+
+        _spbc_threads = [
+            threading.Thread(target=_spbc_run_supplier, args=("bab",  Bookabin.run_search, spbc_postcode, spbc_dod, spbc_pud),                daemon=True),
+            threading.Thread(target=_spbc_run_supplier, args=("bpsb", BPSB.run_search,     spbc_postcode, _spbc_bpsb_dod, _spbc_bpsb_pud),  daemon=True),
+            threading.Thread(target=_spbc_run_supplier, args=("sbf",  SBF.run_search,      spbc_postcode, spbc_dod, spbc_pud),                daemon=True),
+            threading.Thread(target=_spbc_run_supplier, args=("sbo",  SBO.run_search,      spbc_postcode, spbc_dod, spbc_pud),                daemon=True),
+        ]
+        for t in _spbc_threads:
+            t.start()
+        while any(t.is_alive() for t in _spbc_threads):
+            _done_cnt = sum(1 for k in _SPBC_SUPPLIER_KEYS if k in _spbc_results)
+            prog.progress(_done_cnt / 4, text=f"Postcode {spbc_postcode}: {_done_cnt}/4 suppliers done …")
+            time.sleep(1)
+        for t in _spbc_threads:
+            t.join()
+
+        prog.progress(1.0, text="All done!")
+
+        st.session_state["spbc_last_results"] = _spbc_results
+        st.session_state["spbc_last_pc"]  = spbc_postcode
+        st.session_state["spbc_last_dod"] = spbc_dod
+        st.session_state["spbc_last_pud"] = spbc_pud
+
+    # ── Render results (persist across reruns) ──
+    if "spbc_last_results" in st.session_state:
+        _spbc_res  = st.session_state["spbc_last_results"]
+        _spbc_s_pc  = st.session_state.get("spbc_last_pc", "")
+        _spbc_s_dod = st.session_state.get("spbc_last_dod", "")
+        _spbc_s_pud = st.session_state.get("spbc_last_pud", "")
+
+        st.success(f"✅ Done — Postcode **{_spbc_s_pc}**  |  {_spbc_s_dod} → {_spbc_s_pud}")
+
+        bab_res  = _spbc_res.get("bab",  {})
+        bpsb_res = _spbc_res.get("bpsb", {})
+        sbf_res  = _spbc_res.get("sbf",  {})
+        sbo_res  = _spbc_res.get("sbo",  {})
+
+        st.subheader("📦 BookABin")
+        if bab_res:
+            st.dataframe(_to_df(bab_res, Bookabin.WASTE_TYPES, Bookabin.ALL_SIZES), width='stretch')
+        else:
+            st.warning("No data returned from BookABin.")
+
+        st.subheader("💰 BestPriceSkipBins")
+        if bpsb_res:
+            st.dataframe(_to_df(bpsb_res, BPSB.WASTE_TYPES, BPSB.ALL_SIZES), width='stretch')
+        else:
+            st.warning("No data returned from BestPriceSkipBins.")
+
+        st.subheader("🔍 SkipBinFinder")
+        if sbf_res:
+            st.dataframe(_to_df(sbf_res, SBF.WASTE_TYPES, SBF.ALL_SIZES), width='stretch')
+        else:
+            st.warning("No data returned from SkipBinFinder.")
+
+        st.subheader("🌐 SkipBinsOnline")
+        if sbo_res:
+            sbo_waste = {wt: list(sizes.keys()) for wt, sizes in sbo_res.items()}
+            st.dataframe(_to_df(sbo_res, sbo_waste, SBO.ALL_SIZES), width='stretch')
+        else:
+            st.warning("No data returned from SkipBinsOnline.")
 
 # ===========================================================================
 # PAGE: BookABin
