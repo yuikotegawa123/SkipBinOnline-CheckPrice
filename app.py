@@ -1169,8 +1169,8 @@ elif page == "BestPriceSkipBins":
             # Read orig_prices from session state — only present after a fresh search
             _orig_prices = st.session_state.get("bpsb_edited_prices", {})
 
-            # Only show/edit sizes < 7.5 m³ (i.e. 2, 3, 4, 5, 6, 7)
-            _BPSB_SMALL_SIZES = [s for s in BPSB.ALL_SIZES if float(s) <= 7.5]
+            # Only show/edit sizes <= 6 m³ (i.e. 2, 3, 4, 5, 6)
+            _BPSB_SMALL_SIZES = [s for s in BPSB.ALL_SIZES if float(s) <= 6]
             _bpsb_display_sizes = _BPSB_SMALL_SIZES
 
             def _edit_sizes_for(wt):
@@ -2203,7 +2203,7 @@ elif page == "SkipBinsOnline":
                     + "  |  ".join(f"{a['label']}: `{a['username']}` (postcode {a.get('postcode') or 'not set'})" for a in _sbo_unmatched)
                 )
 
-            _sbo_lt75 = [s for s in SBO.ALL_SIZES if float(s) <= 7.5]
+            _sbo_lt75 = [s for s in SBO.ALL_SIZES if float(s) <= 6]
             _sbo_orig  = st.session_state.get("sbo_edited_prices", {})
 
             def _sbo_edit_sizes_for(wt):

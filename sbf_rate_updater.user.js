@@ -327,19 +327,59 @@
         var allRows = getAllTableRows();
         var priceCount = 0, stockCount = 0;
 
+        // Strategy 1: label-based (cells[0] text starts with "price"/"stock")
         allRows.forEach(function(row) {
             var firstCell = row.cells && row.cells[0] ? row.cells[0].textContent.trim().toLowerCase() : '';
-            var isPrice = /^price/.test(firstCell);
-            var isStock = /^stock/.test(firstCell) && !/available/.test(firstCell);
+            var isPrice = /price/.test(firstCell);
+            var isStock = /stock/.test(firstCell) && !/available/.test(firstCell);
             if (isPrice && price !== undefined && price !== null) {
-                var inputs = getEditableInputs(row);
-                inputs.forEach(function(inp) { fillInput(inp, price); priceCount++; });
+                getEditableInputs(row).forEach(function(inp) { fillInput(inp, price); priceCount++; });
             }
             if (isStock && stock !== null) {
-                var inputs = getEditableInputs(row);
-                inputs.forEach(function(inp) { fillInput(inp, stock); stockCount++; });
+                getEditableInputs(row).forEach(function(inp) { fillInput(inp, stock); stockCount++; });
             }
         });
+
+        // Strategy 2: input name/id attribute matching (if strategy 1 found nothing)
+        if (priceCount === 0 && stockCount === 0) {
+            log('    label-match found 0 — trying input name/id fallback', '#fab387');
+            var allInputs = Array.prototype.slice.call(
+                document.querySelectorAll('input[type="text"], input[type="number"], input:not([type])')
+            ).filter(function(inp) { return !inp.readOnly && !inp.disabled && inp.type !== 'hidden'; });
+
+            // Debug: log first row text and first few inputs
+            allRows.slice(0, 5).forEach(function(r, ri) {
+                var cells = Array.prototype.map.call(r.cells || [], function(c) { return '"' + c.textContent.trim().substring(0,30) + '"'; });
+                log('    row[' + ri + '] cells: ' + cells.join(', '), '#585b70');
+            });
+            log('    editable inputs: ' + allInputs.length, '#585b70');
+            allInputs.slice(0, 6).forEach(function(inp) {
+                log('    inp name="' + (inp.name||'') + '" id="' + (inp.id||'') + '" val="' + inp.value + '"', '#585b70');
+            });
+
+            allInputs.forEach(function(inp) {
+                var key = ((inp.name || '') + ' ' + (inp.id || '')).toLowerCase();
+                if (/price|rate|cost/.test(key) && price !== undefined && price !== null) {
+                    fillInput(inp, price); priceCount++;
+                } else if (/stock|qty|quantity|avail/.test(key) && stock !== null) {
+                    fillInput(inp, stock); stockCount++;
+                }
+            });
+        }
+
+        // Strategy 3: positional — if still nothing and there are exactly 2 inputs, first=price second=stock
+        if (priceCount === 0 && stockCount === 0) {
+            var allInputs2 = Array.prototype.slice.call(
+                document.querySelectorAll('input[type="text"], input[type="number"], input:not([type])')
+            ).filter(function(inp) { return !inp.readOnly && !inp.disabled && inp.type !== 'hidden'; });
+            log('    name-match found 0 — positional fallback, inputs=' + allInputs2.length, '#fab387');
+            if (allInputs2.length >= 1 && price !== undefined && price !== null) {
+                fillInput(allInputs2[0], price); priceCount++;
+            }
+            if (allInputs2.length >= 2 && stock !== null) {
+                fillInput(allInputs2[1], stock); stockCount++;
+            }
+        }
 
         log('    price filled: ' + priceCount + '  stock filled: ' + stockCount, '#a6adc8');
 
