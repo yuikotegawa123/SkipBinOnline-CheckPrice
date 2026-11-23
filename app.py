@@ -640,16 +640,24 @@ def _render_diagnostics():
             )
         else:
             st.markdown(
-                "- **Chrome:** ⚠️ not found"
+                "- **Chrome:** ⚠️ not fully resolved"
                 f"\n  - browser: `{chrome}`"
                 f"\n  - driver:  `{driver}`"
             )
-        if cloud and not chrome_ok:
-            st.error(
-                "Chromium is not visible to the app. On Streamlit Cloud the "
-                "browser/driver come from `packages.txt` (`chromium`, "
-                "`chromium-driver`) — check the deploy log for apt errors."
-            )
+            if cloud:
+                st.error(
+                    "Chromium is not visible to the app. On Streamlit Cloud the "
+                    "browser/driver come from `packages.txt` (`chromium`, "
+                    "`chromium-driver`). A chromedriver that exits with "
+                    "**status 127** means a required shared library is "
+                    "missing — the runtime libs are now listed in "
+                    "`packages.txt` too."
+                )
+            else:
+                st.info(
+                    "On Streamlit Cloud the browser/driver are installed via "
+                    "`packages.txt` (chromium, chromium-driver)."
+                )
         # Live launch test — the only way to know for sure.
         if st.button("🧪 Test Chrome launch", key="diag_chrome_test"):
             with st.spinner("Starting headless Chrome…"):

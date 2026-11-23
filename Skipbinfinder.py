@@ -169,7 +169,13 @@ def _make_driver(retries=3):
             opts.add_argument("--no-service-autorun")
             opts.add_argument("--password-store=basic")
             opts.add_argument("--log-level=3")
-            service = Service(executable_path=driver_bin) if driver_bin else Service()
+            if driver_bin:
+                service = Service(executable_path=driver_bin)
+            else:
+                # Only fall back to Selenium Manager when no system chromium
+                # was found — on the cloud container its downloaded driver
+                # exits with status 127 and mismatches the apt-installed one.
+                service = Service()
             driver = webdriver.Chrome(service=service, options=opts)
             stealth(driver,
                     languages=["en-US", "en"],

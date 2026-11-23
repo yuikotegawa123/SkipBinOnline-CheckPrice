@@ -43,6 +43,30 @@ BTN_XPATH    = "//a[contains(@href,'btnGetBestPrice')]"
 # once per process instead of once per worker thread.
 _resolve_logged = []
 
+
+def _shell_which(name: str):
+    """
+    Locate an executable via the shell, ignoring any error output.
+
+    `shutil.which` only searches PATH.  On the Streamlit Cloud container the
+    app user has a very small PATH that does not include /usr/bin, so the
+    apt-installed chromium/chromedriver is invisible to it even though the
+    binaries exist.  Asking the shell resolves them reliably.
+    """
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["sh", "-c", f"command -v {name} 2>/dev/null"],
+            capture_output=True, text=True, timeout=10,
+        )
+        path = (out.stdout or "").strip().splitlines()
+        if path and path[0] and os.path.isfile(path[0]):
+            return path[0]
+    except Exception:
+        pass
+    return None
+
+
 def _bundled_chrome_paths():
     """
     Return (chrome_binary, chromedriver_exe) paths, in priority order:
@@ -129,6 +153,16 @@ def _bundled_chrome_paths():
                 driver = found
                 break
 
+    # 5. Last resort: ask the shell.  On Streamlit Cloud the apt packages are
+    #    installed but neither os.path.isfile() nor shutil.which() reliably
+    #    finds them (PATH does not include /usr/bin for the app user), which
+    #    made Selenium Manager download a mismatched chromedriver that then
+    #    died with exit status 127 (missing shared library).
+    if (chrome is None or driver is None) and platform.system() == 'Linux':
+        chrome = chrome or _shell_which('chromium') or _shell_which('chromium-browser') \
+                                  or _shell_which('google-chrome')
+        driver = driver or _shell_which('chromedriver')
+
     if (chrome is None or driver is None) and not _resolve_logged:
         # Explain *why* — a silent None is impossible to debug remotely.
         _resolve_logged.append(True)
@@ -206,9 +240,23 @@ def make_driver(retries=3):
     opts.add_argument("--password-store=basic")
 
     last_err = None
+    # Selenium Manager downloads a matching chromedriver on demand.  That is
+    # fine on a developer machine, but on the Streamlit Cloud container the
+    # downloaded binary dies with exit status 127 (missing shared library) and
+    # does not match the apt-installed browser — so it is only allowed when no
+    # system chromium was found.
+    _allow_manager = not (chrome_bin and driver_bin)
     for attempt in range(retries):
         try:
-            service = Service(executable_path=driver_bin) if driver_bin else Service()
+            if driver_bin:
+                service = Service(executable_path=driver_bin)
+            elif _allow_manager:
+                service = Service()
+            else:
+                raise RuntimeError(
+                    "No chromedriver found. Install it via packages.txt "
+                    "(chromium-driver) or add it to PATH."
+                )
             return webdriver.Chrome(service=service, options=opts)
         except Exception as e:
             last_err = e
