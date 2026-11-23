@@ -21,6 +21,8 @@ import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from runtime_tuning import workers as _tuned_workers
+
 # Selenium is imported lazily inside _make_driver() so that importing this
 # module does not block the UI on startup.
 
@@ -58,7 +60,9 @@ def _log(msg):
         if getattr(sys, 'frozen', False):
             log_dir = os.path.dirname(sys.executable)
         else:
-            log_dir = os.path.dirname(os.path.abspath(__file__))
+            log_dir = os.path.join(os.environ.get("TMPDIR") or os.environ.get("TEMP") or
+                                   os.path.dirname(os.path.abspath(__file__)), "skipbin_cache")
+        os.makedirs(log_dir, exist_ok=True)
         log_path = os.path.join(log_dir, 'sbf_debug.log')
         with open(log_path, 'a', encoding='utf-8') as f:
             f.write(msg + '\n')
@@ -68,29 +72,63 @@ def _log(msg):
 
 def _bundled_chrome_paths():
     """
-    Return (chrome_binary, chromedriver_exe) paths, in priority order:
-      1. PyInstaller EXE  → bundled chrome-win64 / chromedriver-win64
-      2. Linux system     → /usr/bin/chromium-browser (Streamlit Cloud, Ubuntu)
-      3. Fallback         → (None, None)  relies on PATH / selenium-manager
+    Return (chrome_binary, chromedriver_exe) paths.
+    Delegates to Bookabin's resolver so both Selenium modules always agree on
+    which browser/driver pair to use (see Bookabin._bundled_chrome_paths for
+    the full priority list: PyInstaller bundle → Linux system → standard
+    install paths → PATH → selenium-manager fallback).
     """
-    import sys, os
-    # 1. Frozen EXE bundle
+    try:
+        from Bookabin import _bundled_chrome_paths as _resolve
+        return _resolve()
+    except Exception:
+        pass
+
+    # Standalone fallback (Bookabin not importable).
+    import sys, os, shutil, platform
     if getattr(sys, 'frozen', False):
         base   = sys._MEIPASS
-        chrome = os.path.join(base, 'chrome-win64',       'chrome.exe')
-        driver = os.path.join(base, 'chromedriver-win64',  'chromedriver.exe')
+        chrome = os.path.join(base, 'chrome-win64',      'chrome.exe')
+        driver = os.path.join(base, 'chromedriver-win64', 'chromedriver.exe')
         if os.path.isfile(chrome) and os.path.isfile(driver):
             return chrome, driver
-    # 2. Linux system Chromium (Streamlit Cloud / Ubuntu)
-    import platform
+
+    chrome = None
+    driver = None
     if platform.system() == 'Linux':
-        for chrome_candidate in ('/usr/bin/chromium-browser', '/usr/bin/chromium'):
-            if os.path.isfile(chrome_candidate):
-                for driver_candidate in ('/usr/bin/chromedriver', '/usr/lib/chromium-browser/chromedriver'):
-                    if os.path.isfile(driver_candidate):
-                        return chrome_candidate, driver_candidate
-                return chrome_candidate, None
-    return None, None
+        for c in ('/usr/bin/chromium-browser', '/usr/bin/chromium',
+                  '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable'):
+            if os.path.isfile(c):
+                chrome = c
+                break
+        for c in ('/usr/bin/chromedriver', '/usr/lib/chromium-browser/chromedriver',
+                  '/usr/lib/chromium/chromedriver'):
+            if os.path.isfile(c):
+                driver = c
+                break
+    elif platform.system() == 'Windows':
+        for c in (r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+                  r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+                  r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'):
+            if os.path.isfile(c):
+                chrome = c
+                break
+
+    if chrome is None:
+        for name in ('chromium-browser', 'chromium', 'google-chrome',
+                     'google-chrome-stable', 'chrome', 'msedge'):
+            found = shutil.which(name)
+            if found:
+                chrome = found
+                break
+    if driver is None:
+        for name in ('chromedriver', 'chromium.chromedriver'):
+            found = shutil.which(name)
+            if found:
+                driver = found
+                break
+
+    return chrome, driver
 
 
 def _make_driver(retries=3):
@@ -116,22 +154,41 @@ def _make_driver(retries=3):
             opts.add_argument("--disable-blink-features=AutomationControlled")
             opts.add_experimental_option("excludeSwitches", ["enable-automation"])
             opts.add_experimental_option("useAutomationExtension", False)
+            # Cloud-friendly tuning: small /dev/shm on containers, low memory footprint.
+            opts.add_argument("--disable-software-rasterizer")
+            opts.add_argument("--disable-extensions")
+            opts.add_argument("--disable-default-apps")
+            opts.add_argument("--no-first-run")
+            opts.add_argument("--disable-sync")
+            opts.add_argument("--disable-background-networking")
+            opts.add_argument("--disable-background-timer-throttling")
+            opts.add_argument("--disable-renderer-backgrounding")
+            opts.add_argument("--disable-client-side-phishing-detection")
+            opts.add_argument("--disable-notifications")
+            opts.add_argument("--disable-popup-blocking")
+            opts.add_argument("--no-service-autorun")
+            opts.add_argument("--password-store=basic")
+            opts.add_argument("--log-level=3")
             service = Service(executable_path=driver_bin) if driver_bin else Service()
             driver = webdriver.Chrome(service=service, options=opts)
             stealth(driver,
-                languages=["en-US", "en"],
-                vendor="Google Inc.",
-                platform="Win32",
-                webgl_vendor="Intel Inc.",
-                renderer="Intel Iris OpenGL Engine",
-                fix_hairline=True,
+                    languages=["en-US", "en"],
+                    vendor="Google Inc.",
+                    platform="Win32",
+                    webgl_vendor="Intel Inc.",
+                    renderer="Intel Iris OpenGL Engine",
+                    fix_hairline=True,
             )
             return driver
         except Exception as exc:
-            _log(f"[SBF] Chrome launch attempt {attempt+1}/{retries} failed: {exc}")
+            _log(f"[SBF] Chrome launch attempt {attempt+1}/{retries} failed "
+                 f"(chrome={chrome_bin!r}, driver={driver_bin!r}): {exc}")
             if attempt < retries - 1:
                 time.sleep(2)
-    raise RuntimeError("Could not start Chrome after multiple attempts")
+    raise RuntimeError(
+        f"Could not start Chrome after {retries} attempts "
+        f"(chrome={chrome_bin!r}, driver={driver_bin!r})"
+    )
 
 
 def _set_datepicker(driver, input_id, year, month_0indexed, day):
@@ -380,7 +437,8 @@ def run_search(postcode, dod, pud, cell_q, status_q, done_event):
                         f"SBF  –  {waste_name}  {key[:-2]} m³ (no soil)"
                     )
 
-    with ThreadPoolExecutor(max_workers=3) as ex:
+    # Each worker owns one headless Chrome instance → scale to the host CPU count.
+    with ThreadPoolExecutor(max_workers=_tuned_workers(3)) as ex:
         futures = [
             ex.submit(fetch_one_waste_type, wt)
             for wt in WASTE_TYPES

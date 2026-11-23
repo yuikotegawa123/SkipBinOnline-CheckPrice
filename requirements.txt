@@ -1,7 +1,17 @@
+# Streamlit web UI
 streamlit>=1.32.0
+
+# Headless Chrome scraping (BookABin, SkipBinFinder)
 selenium>=4.20.0
 selenium-stealth>=1.0.6
+
+# HTTP scraping (BestPriceSkipBins, SkipBinsOnline)
 requests>=2.31.0
 beautifulsoup4>=4.12.0
+
+# TLS CA bundle (required when running as a frozen EXE)
 certifi>=2024.2.2
+
+# Dataframes for the price tables
 pandas>=2.0.0
+numpy>=1.24.0

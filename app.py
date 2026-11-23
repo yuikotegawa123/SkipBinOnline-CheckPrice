@@ -6,6 +6,7 @@ Deploy to Streamlit Community Cloud (free) from GitHub.
 import json
 import os
 import queue
+import tempfile
 import threading
 import time
 from typing import Optional
@@ -17,6 +18,7 @@ import Bookabin
 import Bestpriceskipbins as BPSB
 import Skipbinfinder as SBF
 import Skipbinsonline as SBO
+from runtime_tuning import cpu_count, is_cloud, search_timeout
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -83,10 +85,64 @@ def _dod_to_sbo_date(d_slash: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Default dates
+# ---------------------------------------------------------------------------
+# The suppliers reject hire dates in the past ("Drop-off date must be greater
+# than today's date"), so the defaults must be relative to the current date,
+# not hard-coded.  Delivery = +7 days, pickup = +14 days.
+from datetime import date as _date, timedelta as _timedelta
+
+def _default_dates() -> tuple:
+    """Return (delivery, pickup) as D/MM/YYYY strings, both in the future."""
+    today = _date.today()
+    dod   = today + _timedelta(days=7)
+    pud   = today + _timedelta(days=14)
+    return (dod.strftime("%-d/%m/%Y") if os.name != "nt" else dod.strftime("%d/%m/%Y"),
+            pud.strftime("%-d/%m/%Y") if os.name != "nt" else pud.strftime("%d/%m/%Y"))
+
+
+_DEF_DOD, _DEF_PUD = _default_dates()
+
+
+# ---------------------------------------------------------------------------
 # Disk cache helpers  (survive F5 / page refresh)
 # ---------------------------------------------------------------------------
+# NOTE: Streamlit Community Cloud's filesystem is READ-ONLY, so writing next to
+# the source file raises PermissionError. We therefore pick a writable cache
+# directory at import time: local dev -> ./.cache, cloud -> $TMPDIR / /tmp.
+# Every write is additionally wrapped in try/except so a cache failure can
+# never break a search.
 
-_CACHE_DIR     = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
+# Maximum seconds a single supplier search may run before it is abandoned.
+_SEARCH_TIMEOUT = search_timeout(600)
+
+def _pick_cache_dir() -> str:
+    """Return the first writable directory suitable for caching."""
+    candidates = []
+    local = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
+    candidates.append(local)
+    for env in ("STREAMLIT_CACHE_DIR", "TMPDIR", "TMP", "TEMP"):
+        val = os.environ.get(env)
+        if val:
+            candidates.append(os.path.join(val, "skipbin_cache"))
+    candidates.append(os.path.join("/tmp", "skipbin_cache"))
+    candidates.append(os.path.join(os.path.expanduser("~"), ".skipbin_cache"))
+
+    for cand in candidates:
+        try:
+            os.makedirs(cand, exist_ok=True)
+            probe = os.path.join(cand, ".writable")
+            with open(probe, "w", encoding="utf-8") as f:
+                f.write("1")
+            os.remove(probe)
+            return cand
+        except Exception:
+            continue
+    # Nothing writable – fall back to a temp dir that usually exists.
+    return os.path.join(tempfile.gettempdir(), "skipbin_cache")
+
+
+_CACHE_DIR     = _pick_cache_dir()
 _BAB_CACHE     = os.path.join(_CACHE_DIR, "bab_results.json")
 _BPSB_CACHE    = os.path.join(_CACHE_DIR, "bpsb_results.json")
 _SBF_CACHE     = os.path.join(_CACHE_DIR, "sbf_results.json")
@@ -117,10 +173,16 @@ _DEFAULT_SBO_ACCOUNTS = [
 ]
 
 def _save_cache(path: str, data: dict) -> None:
-    """Persist arbitrary dict to a JSON file."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f)
+    """Persist arbitrary dict to a JSON file. Never raises."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(tmp, path)   # atomic write – avoids corrupt cache on crash
+    except Exception:
+        # Read-only filesystem / disk full / permission denied -> run without cache.
+        pass
 
 def _load_cache(path: str) -> Optional[dict]:
     """Load dict from JSON file; return None if missing or corrupt."""
@@ -460,6 +522,52 @@ def _go_home():
     st.session_state.page = "Home"
     st.session_state.supplier_nav = None
 
+
+# ---------------------------------------------------------------------------
+# Environment diagnostics
+# ---------------------------------------------------------------------------
+def _chrome_status() -> tuple:
+    """Return (browser_path, driver_path, ok) for the headless Chrome setup."""
+    try:
+        from Bookabin import _bundled_chrome_paths
+        chrome, driver = _bundled_chrome_paths()
+    except Exception:
+        return (None, None, False)
+    return (chrome, driver, bool(chrome) and bool(driver))
+
+
+def _render_diagnostics():
+    """Show a collapsible environment report in the sidebar."""
+    chrome, driver, chrome_ok = _chrome_status()
+    cpus = cpu_count()
+    cloud = is_cloud()
+    gist_ok = bool(_gist_token() and _gist_id())
+
+    with st.expander("⚙️ Environment"):
+        st.markdown(
+            f"- **CPUs:** {cpus}"
+            f"\n- **Mode:** {'☁️ Cloud container' if cloud else '💻 Local'}"
+            f"\n- **Cache dir:** `{_CACHE_DIR}`"
+            f"\n- **Account sync (Gist):** {'✅ configured' if gist_ok else '⚠️ not configured'}"
+        )
+        if chrome_ok:
+            st.markdown(
+                f"- **Chrome:** ✅ `{os.path.basename(chrome)}`"
+                f"\n- **Driver:** ✅ `{os.path.basename(driver)}`"
+            )
+        else:
+            st.markdown(
+                "- **Chrome:** ⚠️ not found"
+                f"\n  - browser: `{chrome}`"
+                f"\n  - driver:  `{driver}`"
+            )
+        if cloud and not chrome_ok:
+            st.info(
+                "On Streamlit Cloud the browser/driver are installed via "
+                "`packages.txt` (chromium, chromium-driver)."
+            )
+
+
 with st.sidebar:
     st.title("🗑️ SkipBin Tool")
     st.markdown("---")
@@ -485,6 +593,9 @@ with st.sidebar:
     if supplier_nav:
         st.session_state.page = supplier_nav
 
+    st.markdown("---")
+    _render_diagnostics()
+
 page = st.session_state.page
 
 # ===========================================================================
@@ -507,9 +618,9 @@ if page == "Home":
 
     col1, col2, col3 = st.columns([1.4, 1.4, 1])
     with col1:
-        dod = st.text_input("Delivery Date (D/MM/YYYY)", value="1/04/2026")
+        dod = st.text_input("Delivery Date (D/MM/YYYY)", value=_DEF_DOD)
     with col2:
-        pud = st.text_input("Pickup Date (D/MM/YYYY)", value="8/04/2026")
+        pud = st.text_input("Pickup Date (D/MM/YYYY)", value=_DEF_PUD)
     with col3:
         st.write("")
         st.write("")
@@ -533,7 +644,8 @@ if page == "Home":
             status_q = queue.Queue()
             done     = threading.Event()
             threading.Thread(target=run_fn, args=(*args, cell_q, status_q, done), daemon=True).start()
-            done.wait()
+            # Bound the wait so one unresponsive supplier cannot hang the app.
+            done.wait(timeout=_SEARCH_TIMEOUT)
             out = {}
             while not cell_q.empty():
                 wt, size, price = cell_q.get_nowait()
@@ -542,25 +654,64 @@ if page == "Home":
 
         prog = st.progress(0, text="Searching postcodes …")
 
-        # Process one postcode at a time → max 2 Chrome instances at once (BAB + SBF)
+        # Process one postcode at a time → at most 2 Chrome instances at once
+        # (BAB + SBF). On the 1-CPU cloud tier the Chrome-heavy suppliers are
+        # run sequentially so the container does not get OOM-killed.
+        _chromium_heavy = {"bab", "sbf"}
+        _light          = {"bpsb", "sbo"}
+        _cpus           = cpu_count()
+        _run_heavy_together = _cpus >= 4
+
         for _pc_i, _pc in enumerate(HOME_POSTCODES):
             prog.progress(n_done_total / total_tasks,
                           text=f"Postcode {_pc} ({_pc_i+1}/{len(HOME_POSTCODES)}) …")
-            _pc_threads = [
-                threading.Thread(target=_run_supplier, args=(_pc, "bab",  Bookabin.run_search, _pc, dod, pud),              daemon=True),
-                threading.Thread(target=_run_supplier, args=(_pc, "bpsb", BPSB.run_search,     _pc, _bpsb_dod, _bpsb_pud),  daemon=True),
-                threading.Thread(target=_run_supplier, args=(_pc, "sbf",  SBF.run_search,      _pc, dod, pud),              daemon=True),
-                threading.Thread(target=_run_supplier, args=(_pc, "sbo",  SBO.run_search,      _pc, dod, pud),              daemon=True),
-            ]
-            for t in _pc_threads:
-                t.start()
-            while any(t.is_alive() for t in _pc_threads):
-                _done_pc = sum(1 for k in _SUPPLIER_KEYS if k in all_results[_pc])
-                prog.progress((n_done_total + _done_pc) / total_tasks,
-                              text=f"Postcode {_pc}: {_done_pc}/4 suppliers done …")
-                time.sleep(1)
-            for t in _pc_threads:
-                t.join()
+
+            def _wait_group(threads, label):
+                while any(t.is_alive() for t in threads):
+                    _done_pc = sum(1 for k in _SUPPLIER_KEYS if k in all_results[_pc])
+                    prog.progress((n_done_total + _done_pc) / total_tasks,
+                                  text=f"Postcode {_pc}: {_done_pc}/4 suppliers done …")
+                    time.sleep(1)
+                for t in threads:
+                    t.join()
+
+            if _run_heavy_together:
+                # Enough cores → run all four suppliers at the same time.
+                _threads = []
+                for _key, _fn, _args in (
+                    ("bab",  Bookabin.run_search, (_pc, dod, pud)),
+                    ("bpsb", BPSB.run_search,     (_pc, _bpsb_dod, _bpsb_pud)),
+                    ("sbf",  SBF.run_search,      (_pc, dod, pud)),
+                    ("sbo",  SBO.run_search,      (_pc, dod, pud)),
+                ):
+                    t = threading.Thread(target=_run_supplier,
+                                         args=(_pc, _key, _fn, *_args), daemon=True)
+                    t.start()
+                    _threads.append(t)
+                _wait_group(_threads, "all")
+            else:
+                # Low core count → run the HTTP-only suppliers together first,
+                # then the two Selenium suppliers one after the other.
+                _light_threads = []
+                for _key, _fn, _args in (
+                    ("bpsb", BPSB.run_search, (_pc, _bpsb_dod, _bpsb_pud)),
+                    ("sbo",  SBO.run_search, (_pc, dod, pud)),
+                ):
+                    t = threading.Thread(target=_run_supplier,
+                                         args=(_pc, _key, _fn, *_args), daemon=True)
+                    t.start()
+                    _light_threads.append(t)
+                _wait_group(_light_threads, "light")
+
+                for _key, _fn, _args in (
+                    ("bab",  Bookabin.run_search, (_pc, dod, pud)),
+                    ("sbf",  SBF.run_search,      (_pc, dod, pud)),
+                ):
+                    t = threading.Thread(target=_run_supplier,
+                                         args=(_pc, _key, _fn, *_args), daemon=True)
+                    t.start()
+                    _wait_group([t], _key)
+
             n_done_total += len(_SUPPLIER_KEYS)
 
         prog.progress(1.0, text="All done!")
@@ -623,9 +774,9 @@ elif page == "Search by Postcode":
     with spbc_col1:
         spbc_postcode = st.text_input("Postcode", value="3173", key="spbc_pc")
     with spbc_col2:
-        spbc_dod = st.text_input("Delivery Date (D/MM/YYYY)", value="1/04/2026", key="spbc_dod")
+        spbc_dod = st.text_input("Delivery Date (D/MM/YYYY)", value=_DEF_DOD, key="spbc_dod")
     with spbc_col3:
-        spbc_pud = st.text_input("Pickup Date (D/MM/YYYY)", value="8/04/2026", key="spbc_pud")
+        spbc_pud = st.text_input("Pickup Date (D/MM/YYYY)", value=_DEF_PUD, key="spbc_pud")
     with spbc_col4:
         st.write("")
         st.write("")
@@ -646,7 +797,8 @@ elif page == "Search by Postcode":
             status_q = queue.Queue()
             done     = threading.Event()
             threading.Thread(target=run_fn, args=(*args, cell_q, status_q, done), daemon=True).start()
-            done.wait()
+            # Bound the wait so one unresponsive supplier cannot hang the app.
+            done.wait(timeout=_SEARCH_TIMEOUT)
             out = {}
             while not cell_q.empty():
                 wt, size, price = cell_q.get_nowait()
@@ -655,20 +807,38 @@ elif page == "Search by Postcode":
 
         prog = st.progress(0, text=f"Searching postcode {spbc_postcode} …")
 
-        _spbc_threads = [
-            threading.Thread(target=_spbc_run_supplier, args=("bab",  Bookabin.run_search, spbc_postcode, spbc_dod, spbc_pud),                daemon=True),
-            threading.Thread(target=_spbc_run_supplier, args=("bpsb", BPSB.run_search,     spbc_postcode, _spbc_bpsb_dod, _spbc_bpsb_pud),  daemon=True),
-            threading.Thread(target=_spbc_run_supplier, args=("sbf",  SBF.run_search,      spbc_postcode, spbc_dod, spbc_pud),                daemon=True),
-            threading.Thread(target=_spbc_run_supplier, args=("sbo",  SBO.run_search,      spbc_postcode, spbc_dod, spbc_pud),                daemon=True),
-        ]
-        for t in _spbc_threads:
+        def _spbc_launch(key, run_fn, *args):
+            t = threading.Thread(target=_spbc_run_supplier,
+                                 args=(key, run_fn, *args), daemon=True)
             t.start()
-        while any(t.is_alive() for t in _spbc_threads):
-            _done_cnt = sum(1 for k in _SPBC_SUPPLIER_KEYS if k in _spbc_results)
-            prog.progress(_done_cnt / 4, text=f"Postcode {spbc_postcode}: {_done_cnt}/4 suppliers done …")
-            time.sleep(1)
-        for t in _spbc_threads:
-            t.join()
+            return t
+
+        def _spbc_wait(threads):
+            while any(t.is_alive() for t in threads):
+                _done_cnt = sum(1 for k in _SPBC_SUPPLIER_KEYS if k in _spbc_results)
+                prog.progress(_done_cnt / 4,
+                              text=f"Postcode {spbc_postcode}: {_done_cnt}/4 suppliers done …")
+                time.sleep(1)
+            for t in threads:
+                t.join()
+
+        _spbc_specs = (
+            ("bab",  Bookabin.run_search, (spbc_postcode, spbc_dod, spbc_pud)),
+            ("bpsb", BPSB.run_search,     (spbc_postcode, _spbc_bpsb_dod, _spbc_bpsb_pud)),
+            ("sbf",  SBF.run_search,      (spbc_postcode, spbc_dod, spbc_pud)),
+            ("sbo",  SBO.run_search,      (spbc_postcode, spbc_dod, spbc_pud)),
+        )
+
+        if cpu_count() >= 4:
+            # Enough cores → all four suppliers at once.
+            _spbc_wait([_spbc_launch(k, f, *a) for k, f, a in _spbc_specs])
+        else:
+            # Low core count → HTTP suppliers together, Selenium ones one by one.
+            _light = [s for s in _spbc_specs if s[0] in ("bpsb", "sbo")]
+            _heavy = [s for s in _spbc_specs if s[0] in ("bab", "sbf")]
+            _spbc_wait([_spbc_launch(k, f, *a) for k, f, a in _light])
+            for k, f, a in _heavy:
+                _spbc_wait([_spbc_launch(k, f, *a)])
 
         prog.progress(1.0, text="All done!")
 
@@ -737,9 +907,9 @@ elif page == "BookABin":
         with bab_col1:
             bab_postcode = st.text_input("Postcode", value="3173", key="bab_pc")
         with bab_col2:
-            bab_dod = st.text_input("Delivery Date (D/MM/YYYY)", value="1/04/2026", key="bab_dod")
+            bab_dod = st.text_input("Delivery Date (D/MM/YYYY)", value=_DEF_DOD, key="bab_dod")
         with bab_col3:
-            bab_pud = st.text_input("Pickup Date (D/MM/YYYY)", value="8/04/2026", key="bab_pud")
+            bab_pud = st.text_input("Pickup Date (D/MM/YYYY)", value=_DEF_PUD, key="bab_pud")
         with bab_col4:
             st.write("")
             st.write("")
@@ -755,7 +925,7 @@ elif page == "BookABin":
                 status_q = queue.Queue()
                 done     = threading.Event()
                 threading.Thread(target=run_fn, args=(*args, cell_q, status_q, done), daemon=True).start()
-                done.wait()
+                done.wait(timeout=_SEARCH_TIMEOUT)
                 out = {}
                 while not cell_q.empty():
                     wt, size, price = cell_q.get_nowait()
@@ -1043,9 +1213,9 @@ elif page == "BestPriceSkipBins":
         with bpsb_col1:
             bpsb_postcode = st.text_input("Postcode", value="3173", key="bpsb_pc")
         with bpsb_col2:
-            bpsb_dod_raw = st.text_input("Delivery Date (D/MM/YYYY)", value="1/04/2026", key="bpsb_dod")
+            bpsb_dod_raw = st.text_input("Delivery Date (D/MM/YYYY)", value=_DEF_DOD, key="bpsb_dod")
         with bpsb_col3:
-            bpsb_pud_raw = st.text_input("Pickup Date (D/MM/YYYY)", value="8/04/2026", key="bpsb_pud")
+            bpsb_pud_raw = st.text_input("Pickup Date (D/MM/YYYY)", value=_DEF_PUD, key="bpsb_pud")
         with bpsb_col4:
             st.write("")
             st.write("")
@@ -1064,7 +1234,7 @@ elif page == "BestPriceSkipBins":
                 status_q = queue.Queue()
                 done     = threading.Event()
                 threading.Thread(target=run_fn, args=(*args, cell_q, status_q, done), daemon=True).start()
-                done.wait()
+                done.wait(timeout=_SEARCH_TIMEOUT)
                 out = {}
                 while not cell_q.empty():
                     wt, size, price = cell_q.get_nowait()
@@ -1470,9 +1640,9 @@ elif page == "SkipBinFinder":
         with sbf_col1:
             sbf_postcode = st.text_input("Postcode", value="3173", key="sbf_pc")
         with sbf_col2:
-            sbf_dod = st.text_input("Delivery Date (D/MM/YYYY)", value="1/04/2026", key="sbf_dod")
+            sbf_dod = st.text_input("Delivery Date (D/MM/YYYY)", value=_DEF_DOD, key="sbf_dod")
         with sbf_col3:
-            sbf_pud = st.text_input("Pickup Date (D/MM/YYYY)", value="8/04/2026", key="sbf_pud")
+            sbf_pud = st.text_input("Pickup Date (D/MM/YYYY)", value=_DEF_PUD, key="sbf_pud")
         with sbf_col4:
             st.write("")
             st.write("")
@@ -1488,7 +1658,7 @@ elif page == "SkipBinFinder":
                 status_q = queue.Queue()
                 done     = threading.Event()
                 threading.Thread(target=run_fn, args=(*args, cell_q, status_q, done), daemon=True).start()
-                done.wait()
+                done.wait(timeout=_SEARCH_TIMEOUT)
                 out = {}
                 while not cell_q.empty():
                     wt, size, price = cell_q.get_nowait()
@@ -2087,9 +2257,9 @@ elif page == "SkipBinsOnline":
         with sbo_col1:
             sbo_postcode = st.text_input("Postcode", value="3173", key="sbo_pc")
         with sbo_col2:
-            sbo_dod = st.text_input("Delivery Date (D/MM/YYYY)", value="1/04/2026", key="sbo_dod")
+            sbo_dod = st.text_input("Delivery Date (D/MM/YYYY)", value=_DEF_DOD, key="sbo_dod")
         with sbo_col3:
-            sbo_pud = st.text_input("Pickup Date (D/MM/YYYY)", value="8/04/2026", key="sbo_pud")
+            sbo_pud = st.text_input("Pickup Date (D/MM/YYYY)", value=_DEF_PUD, key="sbo_pud")
         with sbo_col4:
             st.write("")
             st.write("")
@@ -2105,7 +2275,7 @@ elif page == "SkipBinsOnline":
                 status_q = queue.Queue()
                 done     = threading.Event()
                 threading.Thread(target=run_fn, args=(*args, cell_q, status_q, done), daemon=True).start()
-                done.wait()
+                done.wait(timeout=_SEARCH_TIMEOUT)
                 out = {}
                 while not cell_q.empty():
                     wt, size, price = cell_q.get_nowait()

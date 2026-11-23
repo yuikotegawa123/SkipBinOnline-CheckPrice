@@ -47,6 +47,20 @@ def fmt_price(price):
     return price if price is not None else "N/A"
 
 
+def _default_dates() -> tuple:
+    """
+    Return (delivery, pickup) as D/MM/YYYY strings, both in the future.
+    The suppliers reject hire dates in the past, so the defaults must be
+    relative to today rather than hard-coded.
+    """
+    from datetime import date, timedelta
+    today = date.today()
+    dod   = today + timedelta(days=7)
+    pud   = today + timedelta(days=14)
+    fmt = "%d/%m/%Y"
+    return dod.strftime(fmt), pud.strftime(fmt)
+
+
 # ---------------------------------------------------------------------------
 # UI builder
 # ---------------------------------------------------------------------------
@@ -80,13 +94,13 @@ def build_ui():
 
     tk.Label(inp, text="Delivery Date:", font=FONT_BOLD).grid(
         row=0, column=2, sticky="e", padx=(0, 4))
-    delivery_var = tk.StringVar(value="1/04/2026")
+    delivery_var = tk.StringVar(value=_default_dates()[0])
     tk.Entry(inp, textvariable=delivery_var, font=FONT, width=13).grid(
         row=0, column=3, padx=(0, 18))
 
     tk.Label(inp, text="Pickup Date:", font=FONT_BOLD).grid(
         row=0, column=4, sticky="e", padx=(0, 4))
-    pickup_var = tk.StringVar(value="8/04/2026")
+    pickup_var = tk.StringVar(value=_default_dates()[1])
     tk.Entry(inp, textvariable=pickup_var, font=FONT, width=13).grid(
         row=0, column=5, padx=(0, 18))
 

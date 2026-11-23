@@ -28,6 +28,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from bs4 import BeautifulSoup
 
+from runtime_tuning import workers as _tuned_workers
+
 _MODULE_VERSION = "3-tuple-returns"  # update_multiple_rates / update_waste_type_rates return (ok, msg, screenshot)
 
 
@@ -37,7 +39,9 @@ def _log(msg):
         if getattr(sys, 'frozen', False):
             log_dir = os.path.dirname(sys.executable)
         else:
-            log_dir = os.path.dirname(os.path.abspath(__file__))
+            log_dir = os.path.join(os.environ.get("TMPDIR") or os.environ.get("TEMP") or
+                                   os.path.dirname(os.path.abspath(__file__)), "skipbin_cache")
+        os.makedirs(log_dir, exist_ok=True)
         log_path = os.path.join(log_dir, 'sbo_debug.log')
         with open(log_path, 'a', encoding='utf-8') as f:
             f.write(msg + '\n')
@@ -270,7 +274,8 @@ def run_search(postcode: str, dod: str, pud: str,
     ]
 
     _log(f"[SBO] run_search started: postcode={postcode} total={total} tasks")
-    with ThreadPoolExecutor(max_workers=15) as ex:
+    # I/O-bound (plain HTTP) → generous pool, but still capped for the cloud tier.
+    with ThreadPoolExecutor(max_workers=_tuned_workers(15, min_workers=4, max_workers=12)) as ex:
         futures = [ex.submit(fetch_one, nm, cid, sz) for nm, cid, sz in tasks]
         for f in as_completed(futures):
             try:

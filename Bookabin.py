@@ -3,6 +3,8 @@ import threading
 import queue
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from runtime_tuning import workers as _tuned_workers
+
 # Selenium is imported lazily inside make_driver() so that importing this
 # module does not block the UI on startup.
 
@@ -42,9 +44,14 @@ def _bundled_chrome_paths():
     Return (chrome_binary, chromedriver_exe) paths, in priority order:
       1. PyInstaller EXE  → bundled chrome-win64 / chromedriver-win64
       2. Linux system     → /usr/bin/chromium-browser (Streamlit Cloud, Ubuntu)
-      3. Fallback         → (None, None)  relies on PATH / selenium-manager
+      3. Standard install → Chrome/Edge on Windows, Chrome on macOS
+      4. PATH lookup      → shutil.which('chromium'/'chromedriver')
+      5. Fallback         → (None, None)  relies on selenium-manager
+
+    The driver is searched independently of the browser so that a browser found
+    on PATH is still paired with a driver found on PATH.
     """
-    import sys, os
+    import sys, os, shutil, platform
     # 1. Frozen EXE bundle
     if getattr(sys, 'frozen', False):
         base   = sys._MEIPASS
@@ -52,16 +59,71 @@ def _bundled_chrome_paths():
         driver = os.path.join(base, 'chromedriver-win64',  'chromedriver.exe')
         if os.path.isfile(chrome) and os.path.isfile(driver):
             return chrome, driver
+
     # 2. Linux system Chromium (Streamlit Cloud / Ubuntu)
-    import platform
-    if platform.system() == 'Linux':
-        for chrome_candidate in ('/usr/bin/chromium-browser', '/usr/bin/chromium'):
+    _sysname = platform.system()
+    chrome = None
+    driver = None
+    if _sysname == 'Linux':
+        for chrome_candidate in ('/usr/bin/chromium-browser', '/usr/bin/chromium',
+                                  '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable'):
             if os.path.isfile(chrome_candidate):
-                for driver_candidate in ('/usr/bin/chromedriver', '/usr/lib/chromium-browser/chromedriver'):
-                    if os.path.isfile(driver_candidate):
-                        return chrome_candidate, driver_candidate
-                return chrome_candidate, None
-    return None, None
+                chrome = chrome_candidate
+                break
+        for driver_candidate in ('/usr/bin/chromedriver',
+                                  '/usr/lib/chromium-browser/chromedriver',
+                                  '/usr/lib/chromium/chromedriver'):
+            if os.path.isfile(driver_candidate):
+                driver = driver_candidate
+                break
+
+    # 3. Standard install locations (Windows / macOS)
+    if chrome is None:
+        _win_browsers = (
+            r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+            r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+            r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+            r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
+        )
+        _mac_browsers = (
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+            '/Applications/Chromium.app/Contents/MacOS/Chromium',
+            '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+        )
+        _cands = _win_browsers if _sysname == 'Windows' else _mac_browsers
+        for c in _cands:
+            if os.path.isfile(c):
+                chrome = c
+                break
+    if driver is None:
+        _win_drivers = (
+            r'C:\Program Files\Google\Chrome\Application\chromedriver.exe',
+            r'C:\Program Files (x86)\Google\Chrome\Application\chromedriver.exe',
+            r'C:\chromedriver.exe',
+            r'C:\tools\chromedriver.exe',
+            os.path.join(os.path.expanduser('~'), 'chromedriver.exe'),
+        )
+        for c in _win_drivers:
+            if os.path.isfile(c):
+                driver = c
+                break
+
+    # 4. PATH lookup (covers chromium/chromedriver installed anywhere)
+    if chrome is None:
+        for name in ('chromium-browser', 'chromium', 'google-chrome',
+                     'google-chrome-stable', 'chrome', 'msedge'):
+            found = shutil.which(name)
+            if found:
+                chrome = found
+                break
+    if driver is None:
+        for name in ('chromedriver', 'chromium.chromedriver'):
+            found = shutil.which(name)
+            if found:
+                driver = found
+                break
+
+    return chrome, driver
 
 
 def make_driver(retries=3):
@@ -93,15 +155,27 @@ def make_driver(retries=3):
     opts.add_argument("--log-level=3")
     opts.add_experimental_option("excludeSwitches", ["enable-logging"])
     opts.page_load_strategy = 'eager'
+    # Cloud-friendly tuning: small /dev/shm on containers, low memory footprint.
+    opts.add_argument("--disable-software-rasterizer")
+    opts.add_argument("--disable-features=Translate,MediaRouter,OptimizationHints")
+    opts.add_argument("--disable-notifications")
+    opts.add_argument("--disable-popup-blocking")
+    opts.add_argument("--no-service-autorun")
+    opts.add_argument("--password-store=basic")
 
+    last_err = None
     for attempt in range(retries):
         try:
             service = Service(executable_path=driver_bin) if driver_bin else Service()
             return webdriver.Chrome(service=service, options=opts)
-        except Exception:
+        except Exception as e:
+            last_err = e
             if attempt < retries - 1:
                 time.sleep(2)
-    raise RuntimeError("Could not start Chrome after multiple attempts")
+    raise RuntimeError(
+        f"Could not start Chrome after {retries} attempts "
+        f"(chrome={chrome_bin!r}, driver={driver_bin!r}): {last_err}"
+    )
 
 
 def login(username: str, password: str):
@@ -347,7 +421,8 @@ def run_search(postcode, dod, pud, cell_q, status_q, done_event):
             except Exception:
                 pass
 
-    with ThreadPoolExecutor(max_workers=5) as ex:
+    # Each worker owns one headless Chrome instance → scale to the host CPU count.
+    with ThreadPoolExecutor(max_workers=_tuned_workers(5)) as ex:
         futures = [
             ex.submit(fetch_group, wt, sizes)
             for wt, sizes in WASTE_TYPES.items()

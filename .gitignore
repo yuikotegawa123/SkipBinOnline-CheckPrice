@@ -21,3 +21,9 @@ venv/
 
 # Local disk cache (runtime data, not source code)
 .cache/
+
+# Scrapers' debug logs
+*_debug.log
+
+# Streamlit runtime files
+.streamlit/secrets.toml

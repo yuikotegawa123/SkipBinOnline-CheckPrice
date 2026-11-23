@@ -22,6 +22,8 @@ from datetime import date, timedelta
 import requests
 from bs4 import BeautifulSoup
 
+from runtime_tuning import workers as _tuned_workers
+
 
 def _log(msg):
     """Append a line to bpsb_debug.log next to the exe / script."""
@@ -29,7 +31,9 @@ def _log(msg):
         if getattr(sys, 'frozen', False):
             log_dir = os.path.dirname(sys.executable)
         else:
-            log_dir = os.path.dirname(os.path.abspath(__file__))
+            log_dir = os.path.join(os.environ.get("TMPDIR") or os.environ.get("TEMP") or
+                                   os.path.dirname(os.path.abspath(__file__)), "skipbin_cache")
+        os.makedirs(log_dir, exist_ok=True)
         log_path = os.path.join(log_dir, 'bpsb_debug.log')
         with open(log_path, 'a', encoding='utf-8') as f:
             f.write(msg + '\n')
@@ -206,7 +210,8 @@ def run_search(postcode, delivery_date, collection_date,
     ]
 
     _log(f"[BPSB] run_search started: postcode={postcode} total={total} tasks")
-    with ThreadPoolExecutor(max_workers=10) as ex:
+    # I/O-bound (plain HTTP) → generous pool, but still capped for the cloud tier.
+    with ThreadPoolExecutor(max_workers=_tuned_workers(10, min_workers=4, max_workers=10)) as ex:
         futures = [ex.submit(fetch_one, wt, sz) for wt, sz in tasks]
         for f in as_completed(futures):
             try:

@@ -1,0 +1,17 @@
+[server]
+# Scraping 4 supplier sites (2 of them via headless Chrome) can take a while.
+# Give the websocket enough headroom before Streamlit kills the session.
+headless = true
+maxUploadSize = 20
+enableCORS = false
+enableXsrfProtection = false
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#1a3a5c"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f4f8"
+textColor = "#1a1a1a"
+font = "sans serif"
