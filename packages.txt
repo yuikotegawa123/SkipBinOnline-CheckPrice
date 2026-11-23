@@ -1,11 +1,5 @@
 chromium
 chromium-driver
-# Chromium runtime shared libraries.
-#
-# NOTE: Debian 13 "trixie" renamed several of these to the "t64" (64-bit
-# time_t transition) variants. The bookworm names below do NOT exist on
-# trixie and make `apt-get install` fail with a non-zero exit code, which
-# aborts the whole Streamlit Cloud deployment.
 libasound2t64
 libatk1.0-0t64
 libatk-bridge2.0-0t64
