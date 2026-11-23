@@ -1,11 +1,13 @@
 # Streamlit web UI
 streamlit>=1.32.0
 
-# Headless Chrome scraping (BookABin, SkipBinFinder)
+# Headless Chrome scraping — used only as a fallback when the fast
+# (browser-free) scrapers cannot reach a site.
 selenium>=4.20.0
 selenium-stealth>=1.0.6
 
-# HTTP scraping (BestPriceSkipBins, SkipBinsOnline)
+# HTTP scraping (all four suppliers; the BookABin and SkipBinFinder fast
+# scrapers use plain requests and need no browser at all)
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 

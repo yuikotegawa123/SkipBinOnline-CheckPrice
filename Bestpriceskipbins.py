@@ -22,7 +22,7 @@ from datetime import date, timedelta
 import requests
 from bs4 import BeautifulSoup
 
-from runtime_tuning import workers as _tuned_workers
+from runtime_tuning import http_workers as _tuned_workers
 
 
 def _log(msg):
@@ -211,7 +211,7 @@ def run_search(postcode, delivery_date, collection_date,
 
     _log(f"[BPSB] run_search started: postcode={postcode} total={total} tasks")
     # I/O-bound (plain HTTP) → generous pool, but still capped for the cloud tier.
-    with ThreadPoolExecutor(max_workers=_tuned_workers(10, min_workers=4, max_workers=10)) as ex:
+    with ThreadPoolExecutor(max_workers=_tuned_workers(10)) as ex:
         futures = [ex.submit(fetch_one, wt, sz) for wt, sz in tasks]
         for f in as_completed(futures):
             try:

@@ -74,6 +74,10 @@ def workers(requested: int, min_workers: int = _MIN_WORKERS,
     """
     Scale a requested thread-pool size to the machine we are actually on.
 
+    This is for *Chrome* work: each worker owns a browser instance, so the
+    count is tied to the CPU count.  Plain HTTP requests are far cheaper — use
+    http_workers() for those.
+
     requested  – the number of workers the original code wanted
     returns   – a safe worker count for this environment
     """
@@ -91,6 +95,30 @@ def workers(requested: int, min_workers: int = _MIN_WORKERS,
     # than min_workers and never more than the originally requested amount.
     scaled = max(min_workers, min(requested, cpus + 1))
     return max(1, min(scaled, max_workers, requested))
+
+
+def http_workers(requested: int, max_workers: int = 12) -> int:
+    """
+    Scale a thread-pool size for plain HTTP requests.
+
+    HTTP work uses no browser, so it is limited by socket handling rather
+    than RAM.  A single-core container can still keep a dozen requests in
+    flight, which is why this is deliberately more generous than workers().
+    """
+    override = os.environ.get("SKIPBIN_HTTP_WORKERS")
+    if override:
+        try:
+            n = int(override)
+            if n > 0:
+                return max(1, n)
+        except Exception:
+            pass
+
+    cpus = cpu_count()
+    # More CPUs → more parallelism, but keep it bounded so a shared host is
+    # not hammered with dozens of simultaneous connections.
+    scaled = min(requested, max(4, cpus * 3), max_workers)
+    return max(1, scaled)
 
 
 def is_cloud() -> bool:

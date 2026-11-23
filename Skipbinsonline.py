@@ -28,7 +28,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from bs4 import BeautifulSoup
 
-from runtime_tuning import workers as _tuned_workers
+from runtime_tuning import http_workers as _tuned_workers
 
 _MODULE_VERSION = "3-tuple-returns"  # update_multiple_rates / update_waste_type_rates return (ok, msg, screenshot)
 
@@ -275,7 +275,7 @@ def run_search(postcode: str, dod: str, pud: str,
 
     _log(f"[SBO] run_search started: postcode={postcode} total={total} tasks")
     # I/O-bound (plain HTTP) → generous pool, but still capped for the cloud tier.
-    with ThreadPoolExecutor(max_workers=_tuned_workers(15, min_workers=4, max_workers=12)) as ex:
+    with ThreadPoolExecutor(max_workers=_tuned_workers(12)) as ex:
         futures = [ex.submit(fetch_one, nm, cid, sz) for nm, cid, sz in tasks]
         for f in as_completed(futures):
             try:

@@ -21,6 +21,24 @@ import Skipbinfinder as SBF
 import Skipbinsonline as SBO
 from runtime_tuning import cpu_count, is_cloud, search_timeout
 
+# Browser-free ("fast") scrapers.  Both sites are plain server-rendered
+# forms, so requests is enough and is several times quicker than driving
+# headless Chrome — which matters a lot on the 1 vCPU / 1 GB free tier.
+# The Selenium versions remain as an automatic fallback.
+try:
+    import Bookabin_fast as BAB_FAST
+except Exception:                                     # pragma: no cover
+    BAB_FAST = None
+try:
+    import Skipbinfinder_fast as SBF_FAST
+except Exception:                                     # pragma: no cover
+    SBF_FAST = None
+
+# Allow forcing the old Selenium path (useful if a site changes its markup).
+_USE_BROWSER = os.environ.get("SKIPBIN_FORCE_BROWSER", "").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -86,6 +104,70 @@ def _run_supplier(run_fn, *args):
             errors.append(msg)
 
     return out, errors
+
+
+def _run_supplier_fast(fast_mod, slow_mod, label, *args):
+    """
+    Run the browser-free scraper and fall back to the Selenium one if needed.
+
+    The fast path is ~2-4x quicker and uses a fraction of the memory.  If it
+    returns nothing (site markup changed, network hiccup, ...) the Selenium
+    scraper is used instead so the user still gets prices.
+
+    Returns (results_dict, error_list).
+    """
+    if fast_mod is None or _USE_BROWSER:
+        return _run_supplier(slow_mod.run_search, *args)
+
+    t0 = time.time()
+    out, errors = _run_supplier(fast_mod.run_search, *args)
+    priced = sum(1 for v in out.values() for x in v.values()
+                 if isinstance(x, (int, float)))
+    _log_line(f"[{label}] fast path {time.time() - t0:.1f}s -> {priced} prices")
+
+    if priced:
+        return out, errors
+
+    # Nothing came back — retry with the browser-based scraper.
+    _log_line(f"[{label}] fast path returned no prices, falling back to Selenium")
+    out2, errors2 = _run_supplier(slow_mod.run_search, *args)
+    if out2:
+        errors2 = list(errors2) + [
+            "The fast (browser-free) scraper returned no prices; "
+            "values below came from the slower browser-based scraper."
+        ]
+        return out2, errors2
+    return out, errors
+
+
+def _supplier_fn(key: str):
+    """
+    Return the run_search() function to use for a supplier.
+
+    Prefers the browser-free implementation when it is available; the
+    Selenium version is used otherwise (or when SKIPBIN_FORCE_BROWSER is set).
+    """
+    if not _USE_BROWSER:
+        if key == "bab" and BAB_FAST is not None:
+            return BAB_FAST.run_search
+        if key == "sbf" and SBF_FAST is not None:
+            return SBF_FAST.run_search
+    return {"bab": Bookabin.run_search, "sbf": SBF.run_search}[key]
+
+
+def _log_line(msg: str) -> None:
+    try:
+        print(msg, flush=True)
+    except Exception:
+        pass
+    try:
+        base = os.environ.get("TMPDIR") or os.environ.get("TEMP") or "."
+        d = os.path.join(base, "skipbin_cache")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "app_debug.log"), "a", encoding="utf-8") as f:
+            f.write(msg + "\n")
+    except Exception:
+        pass
 
 
 def _show_supplier_errors(errors: list, supplier: str) -> None:
@@ -749,16 +831,19 @@ if page == "Home":
 
         prog = st.progress(0, text="Searching postcodes …")
 
-        # Process one postcode at a time → at most 2 Chrome instances at once
-        # (BAB + SBF). On the 1-CPU cloud tier the Chrome-heavy suppliers are
-        # run sequentially so the container does not get OOM-killed.
-        _chromium_heavy = {"bab", "sbf"}
-        _light          = {"bpsb", "sbo"}
-        _cpus           = cpu_count()
+        # Process one postcode at a time.  The browser-free scrapers use no
+        # Chrome at all, so they are safe to run concurrently even on the
+        # 1-CPU cloud tier.  Only the Selenium fallbacks are heavy, and those
+        # are kept strictly sequential so the container is never OOM-killed.
+        _cpus = cpu_count()
+        # If the fast scrapers are in use there is no Chrome to ration.
+        _fast_only = not _USE_BROWSER and BAB_FAST is not None and SBF_FAST is not None
         # On the cloud always keep the Chrome-heavy suppliers strictly
         # sequential — the free tier has 1-2 vCPU / 1 GB RAM and two Chrome
         # instances at once reliably wedges (or OOM-kills) the container.
         _run_heavy_together = (_cpus >= 4) and not is_cloud()
+        # With no browser involved, every supplier can run at the same time.
+        _run_all_together = _fast_only or _run_heavy_together
 
         for _pc_i, _pc in enumerate(HOME_POSTCODES):
             prog.progress(n_done_total / total_tasks,
@@ -773,13 +858,13 @@ if page == "Home":
                 for t in threads:
                     t.join()
 
-            if _run_heavy_together:
-                # Enough cores → run all four suppliers at the same time.
+            if _run_all_together:
+                # No browser involved (or plenty of cores) → all four at once.
                 _threads = []
                 for _key, _fn, _args in (
-                    ("bab",  Bookabin.run_search, (_pc, dod, pud)),
+                    ("bab",  _supplier_fn("bab"), (_pc, dod, pud)),
                     ("bpsb", BPSB.run_search,     (_pc, _bpsb_dod, _bpsb_pud)),
-                    ("sbf",  SBF.run_search,      (_pc, dod, pud)),
+                    ("sbf",  _supplier_fn("sbf"), (_pc, dod, pud)),
                     ("sbo",  SBO.run_search,      (_pc, dod, pud)),
                 ):
                     t = threading.Thread(target=_run_supplier,
@@ -802,8 +887,8 @@ if page == "Home":
                 _wait_group(_light_threads, "light")
 
                 for _key, _fn, _args in (
-                    ("bab",  Bookabin.run_search, (_pc, dod, pud)),
-                    ("sbf",  SBF.run_search,      (_pc, dod, pud)),
+                    ("bab",  _supplier_fn("bab"), (_pc, dod, pud)),
+                    ("sbf",  _supplier_fn("sbf"), (_pc, dod, pud)),
                 ):
                     t = threading.Thread(target=_run_supplier,
                                          args=(_pc, _key, _fn, *_args), daemon=True)
@@ -924,14 +1009,19 @@ elif page == "Search by Postcode":
                 t.join()
 
         _spbc_specs = (
-            ("bab",  Bookabin.run_search, (spbc_postcode, spbc_dod, spbc_pud)),
+            ("bab",  _supplier_fn("bab"), (spbc_postcode, spbc_dod, spbc_pud)),
             ("bpsb", BPSB.run_search,     (spbc_postcode, _spbc_bpsb_dod, _spbc_bpsb_pud)),
-            ("sbf",  SBF.run_search,      (spbc_postcode, spbc_dod, spbc_pud)),
+            ("sbf",  _supplier_fn("sbf"), (spbc_postcode, spbc_dod, spbc_pud)),
             ("sbo",  SBO.run_search,      (spbc_postcode, spbc_dod, spbc_pud)),
         )
 
-        if (cpu_count() >= 4) and not is_cloud():
-            # Enough cores → all four suppliers at once.
+        # The browser-free scrapers need no Chrome, so all four suppliers can
+        # run at once even on the 1-CPU cloud tier.  Only the Selenium
+        # fallbacks are heavy and are kept strictly sequential there.
+        _fast_only = (not _USE_BROWSER
+                      and BAB_FAST is not None and SBF_FAST is not None)
+        if _fast_only or ((cpu_count() >= 4) and not is_cloud()):
+            # No browser involved (or plenty of cores) → all four at once.
             _spbc_wait([_spbc_launch(k, f, *a) for k, f, a in _spbc_specs])
         else:
             # Low core count / cloud → HTTP suppliers together, Selenium ones
@@ -1036,8 +1126,9 @@ elif page == "BookABin":
                 st.stop()
 
             with st.spinner("🔍 Fetching prices from BookABin… (this may take a minute)"):
-                _fetched, _errs = _run_supplier(
-                    Bookabin.run_search, bab_postcode, bab_dod, bab_pud)
+                _fetched, _errs = _run_supplier_fast(
+                    BAB_FAST, Bookabin, "BookABin",
+                    bab_postcode, bab_dod, bab_pud)
 
             _show_supplier_errors(_errs, "BookABin")
 
@@ -1751,8 +1842,9 @@ elif page == "SkipBinFinder":
                 st.stop()
 
             with st.spinner("🔍 Fetching prices from SkipBinFinder… (this may take a few minutes)"):
-                _fetched, _errs = _run_supplier(
-                    SBF.run_search, sbf_postcode, sbf_dod, sbf_pud)
+                _fetched, _errs = _run_supplier_fast(
+                    SBF_FAST, SBF, "SkipBinFinder",
+                    sbf_postcode, sbf_dod, sbf_pud)
 
             _show_supplier_errors(_errs, "SkipBinFinder")
 
