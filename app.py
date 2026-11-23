@@ -175,6 +175,10 @@ _SEARCH_TIMEOUT = search_timeout(600)
 def _pick_cache_dir() -> str:
     """Return the first writable directory suitable for caching."""
     candidates = []
+    # In a container the repo mount may be read-only (or a network FS that is
+    # slow), so prefer a real temp dir first.
+    if is_cloud():
+        candidates.append(os.path.join("/tmp", "skipbin_cache"))
     local = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
     candidates.append(local)
     for env in ("STREAMLIT_CACHE_DIR", "TMPDIR", "TMP", "TEMP"):

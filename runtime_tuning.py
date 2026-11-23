@@ -97,6 +97,11 @@ def is_cloud() -> bool:
     """True when running inside a container/cloud environment."""
     if os.environ.get("STREAMLIT_SERVER_PORT") or os.environ.get("STREAMLIT_RUNTIME"):
         return True
+    # Streamlit Community Cloud mounts the repo under /mount/src and runs the
+    # app as /home/adminuser — neither the env vars nor /proc/1/cgroup are
+    # guaranteed to reveal the container.
+    if os.path.isdir("/mount/src") or os.path.isdir("/home/adminuser"):
+        return True
     try:
         with open("/proc/1/cgroup", "r", encoding="utf-8") as f:
             content = f.read()

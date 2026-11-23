@@ -39,6 +39,9 @@ BTN_XPATH    = "//a[contains(@href,'btnGetBestPrice')]"
 # ---------------------------------------------------------------------------
 # Selenium helpers
 # ---------------------------------------------------------------------------
+# Guards the one-off "why was Chrome not found" diagnostic so it is written
+# once per process instead of once per worker thread.
+_resolve_logged = []
 
 def _bundled_chrome_paths():
     """
@@ -67,13 +70,15 @@ def _bundled_chrome_paths():
     driver = None
     if _sysname == 'Linux':
         for chrome_candidate in ('/usr/bin/chromium-browser', '/usr/bin/chromium',
-                                  '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable'):
+                                  '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable',
+                                  '/usr/lib/chromium/chromium', '/snap/bin/chromium'):
             if os.path.isfile(chrome_candidate):
                 chrome = chrome_candidate
                 break
         for driver_candidate in ('/usr/bin/chromedriver',
                                   '/usr/lib/chromium-browser/chromedriver',
-                                  '/usr/lib/chromium/chromedriver'):
+                                  '/usr/lib/chromium/chromedriver',
+                                  '/usr/lib/chromium-browser/chromedriver.bin'):
             if os.path.isfile(driver_candidate):
                 driver = driver_candidate
                 break
@@ -123,6 +128,17 @@ def _bundled_chrome_paths():
             if found:
                 driver = found
                 break
+
+    if (chrome is None or driver is None) and not _resolve_logged:
+        # Explain *why* — a silent None is impossible to debug remotely.
+        _resolve_logged.append(True)
+        import platform as _pl
+        _cands = ('/usr/bin/chromium', '/usr/bin/chromium-browser',
+                  '/usr/bin/google-chrome', '/usr/bin/chromedriver')
+        _exists = {c: os.path.isfile(c) for c in _cands}
+        _log(f"Chrome resolution: system={_pl.system()} "
+             f"machine={_pl.machine()} chrome={chrome!r} driver={driver!r} "
+             f"exists={_exists} PATH={os.environ.get('PATH','')!r}")
 
     return chrome, driver
 
