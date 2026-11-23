@@ -1,4 +1,5 @@
 ﻿import re
+import os
 import threading
 import queue
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -126,6 +127,31 @@ def _bundled_chrome_paths():
     return chrome, driver
 
 
+# ---------------------------------------------------------------------------
+# Diagnostics
+# ---------------------------------------------------------------------------
+def _log(msg: str) -> None:
+    """
+    Append a diagnostic line to a log file (and stdout) so a failure inside a
+    background thread is visible in the Streamlit logs instead of being
+    silently swallowed and turned into a column of "N/A".
+    """
+    try:
+        line = f"[Bookabin] {msg}"
+        print(line, flush=True)
+    except Exception:
+        pass
+    try:
+        base = os.environ.get("TMPDIR") or os.environ.get("TEMP") or \
+               os.path.dirname(os.path.abspath(__file__))
+        log_dir = os.path.join(base, "skipbin_cache")
+        os.makedirs(log_dir, exist_ok=True)
+        with open(os.path.join(log_dir, "bookabin_debug.log"), "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+
+
 def make_driver(retries=3):
     import time
     from selenium import webdriver
@@ -170,6 +196,8 @@ def make_driver(retries=3):
             return webdriver.Chrome(service=service, options=opts)
         except Exception as e:
             last_err = e
+            _log(f"Chrome start failed (attempt {attempt+1}/{retries}): "
+                 f"chrome={chrome_bin!r} driver={driver_bin!r} err={e!r}")
             if attempt < retries - 1:
                 time.sleep(2)
     raise RuntimeError(
@@ -371,23 +399,28 @@ def run_search(postcode, dod, pud, cell_q, status_q, done_event):
         driver    = None
         try:
             driver = make_driver()
-        except Exception:
-            # Chrome could not start – mark all sizes as N/A
+        except Exception as exc:
+            # Chrome could not start – report the real reason instead of
+            # silently turning every size into a bare "N/A".
+            _log(f"CHROME FAILED for {waste_type}: {exc}")
+            with lock:
+                done_cnt[0] += 1
+                status_q.put(
+                    f"⚠ Chrome failed to start ({waste_type}): {exc}"
+                )
             for size in sizes:
                 cell_q.put((waste_type, size, None))
-                with lock:
-                    done_cnt[0] += 1
-                    status_q.put(
-                        f"Fetching...  {done_cnt[0]} / {total}  -  {waste_type}  {size} m3  (Chrome failed)"
-                    )
             return
         try:
             # Load step-3 once to get all size indices in bulk
             index_map = {}
             try:
                 index_map = get_all_size_indices(driver, step3_url)
-            except Exception:
-                pass
+            except Exception as exc:
+                _log(f"get_all_size_indices failed for {waste_type}: {exc!r}")
+            if not index_map:
+                _log(f"EMPTY index_map for {waste_type} (url={step3_url}) – "
+                     "the step-3 page could not be parsed")
             first_of_group = True
             for size in sizes:
                 price_result = None
@@ -408,6 +441,9 @@ def run_search(postcode, dod, pud, cell_q, status_q, done_event):
                         price = get_best_price(driver, step3_url, idx, dod, pud)
                         if price is not None:
                             price_result = price
+                        else:
+                            _log(f"No price parsed for {waste_type} {size}m3 "
+                                 f"(idx={idx}, dates {dod}->{pud})")
                 first_of_group = False
                 cell_q.put((waste_type, size, price_result))
                 with lock:
@@ -415,6 +451,12 @@ def run_search(postcode, dod, pud, cell_q, status_q, done_event):
                     status_q.put(
                         f"Fetching...  {done_cnt[0]} / {total}  -  {waste_type}  {size} m3"
                     )
+        except Exception as exc:
+            _log(f"fetch_group crashed for {waste_type}: {exc!r}")
+            with lock:
+                done_cnt[0] += 1
+            for size in sizes:
+                cell_q.put((waste_type, size, None))
         finally:
             try:
                 driver.quit()
@@ -422,7 +464,19 @@ def run_search(postcode, dod, pud, cell_q, status_q, done_event):
                 pass
 
     # Each worker owns one headless Chrome instance → scale to the host CPU count.
-    with ThreadPoolExecutor(max_workers=_tuned_workers(5)) as ex:
+    # On the cloud free tier (1-2 vCPU, 1 GB RAM) running several Chrome
+    # instances at once reliably OOM-kills the container, so force 1 worker
+    # there and keep the local machine fast.
+    _max_workers = _tuned_workers(5)
+    try:
+        from runtime_tuning import is_cloud
+        if is_cloud():
+            _max_workers = 1
+    except Exception:
+        pass
+    _log(f"run_search postcode={postcode} {dod}->{pud} workers={_max_workers}")
+
+    with ThreadPoolExecutor(max_workers=_max_workers) as ex:
         futures = [
             ex.submit(fetch_group, wt, sizes)
             for wt, sizes in WASTE_TYPES.items()

@@ -438,7 +438,18 @@ def run_search(postcode, dod, pud, cell_q, status_q, done_event):
                     )
 
     # Each worker owns one headless Chrome instance → scale to the host CPU count.
-    with ThreadPoolExecutor(max_workers=_tuned_workers(3)) as ex:
+    # The cloud free tier (1-2 vCPU, 1 GB RAM) cannot afford more than one
+    # Chrome at a time without being OOM-killed, so force a single worker there.
+    _max_workers = _tuned_workers(3)
+    try:
+        from runtime_tuning import is_cloud
+        if is_cloud():
+            _max_workers = 1
+    except Exception:
+        pass
+    _log(f"[SBF] run_search postcode={postcode} workers={_max_workers}")
+
+    with ThreadPoolExecutor(max_workers=_max_workers) as ex:
         futures = [
             ex.submit(fetch_one_waste_type, wt)
             for wt in WASTE_TYPES

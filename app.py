@@ -6,6 +6,7 @@ Deploy to Streamlit Community Cloud (free) from GitHub.
 import json
 import os
 import queue
+import sys
 import tempfile
 import threading
 import time
@@ -41,6 +42,61 @@ def _fmt_size_col(s: str) -> str:
     if s.endswith('ns'):
         return f"{s[:-2]} m³ (no soil)"
     return f"{s} m³"
+
+
+# ---------------------------------------------------------------------------
+# Supplier runner (shared by every page)
+# ---------------------------------------------------------------------------
+def _run_supplier(run_fn, *args):
+    """
+    Run one scraper in a background thread and collect its results.
+
+    Returns (results_dict, error_list) where ``error_list`` holds the status
+    messages the scraper produced.  Previously every failure was swallowed and
+    the user only saw a wall of "N/A" with no explanation; now the reason is
+    surfaced in the UI and in the Streamlit logs.
+    """
+    cell_q   = queue.Queue()
+    status_q = queue.Queue()
+    done     = threading.Event()
+
+    def _target():
+        try:
+            run_fn(*args, cell_q, status_q, done)
+        except Exception as exc:
+            status_q.put(f"⚠ {type(exc).__name__}: {exc}")
+        finally:
+            done.set()
+
+    t = threading.Thread(target=_target, daemon=True)
+    t.start()
+    # Bound the wait so one unresponsive supplier cannot hang the app.
+    done.wait(timeout=_SEARCH_TIMEOUT)
+
+    out = {}
+    while not cell_q.empty():
+        wt, size, price = cell_q.get_nowait()
+        out.setdefault(wt, {})[size] = price
+
+    errors = []
+    while not status_q.empty():
+        msg = status_q.get_nowait()
+        if msg and (msg.startswith("⚠") or "failed" in msg.lower()
+                    or "error" in msg.lower()):
+            errors.append(msg)
+
+    return out, errors
+
+
+def _show_supplier_errors(errors: list, supplier: str) -> None:
+    """Display scraper errors so a broken search is never silently 'N/A'."""
+    if not errors:
+        return
+    uniq = list(dict.fromkeys(errors))[:6]
+    with st.expander(f"⚠️ {supplier} diagnostics ({len(errors)} issue(s))", expanded=True):
+        for msg in uniq:
+            st.text(msg)
+        st.caption("Full details are in the Streamlit logs (search for '[Bookabin]').")
 
 
 def _to_df(results: dict, waste_types_map: dict, all_sizes: list) -> pd.DataFrame:
@@ -536,6 +592,28 @@ def _chrome_status() -> tuple:
     return (chrome, driver, bool(chrome) and bool(driver))
 
 
+def _chrome_launch_test() -> tuple:
+    """
+    Actually try to start headless Chrome and load a data: URL.
+
+    Returns (ok, message).  Checking that the binary *exists* is not enough —
+    on the cloud container Chrome can be present but fail to launch (missing
+    shared libraries, sandbox issues, driver/browser version mismatch), which
+    is exactly what turns every price into "N/A".
+    """
+    try:
+        from Bookabin import make_driver
+        d = make_driver(retries=1)
+        try:
+            d.get("data:text/html,<title>ok</title>")
+            title = d.title
+        finally:
+            d.quit()
+        return True, f"Chrome launched successfully (page title: {title!r})"
+    except Exception as exc:
+        return False, f"Chrome could not start: {type(exc).__name__}: {exc}"
+
+
 def _render_diagnostics():
     """Show a collapsible environment report in the sidebar."""
     chrome, driver, chrome_ok = _chrome_status()
@@ -547,13 +625,14 @@ def _render_diagnostics():
         st.markdown(
             f"- **CPUs:** {cpus}"
             f"\n- **Mode:** {'☁️ Cloud container' if cloud else '💻 Local'}"
+            f"\n- **Python:** {sys.version.split()[0]}"
             f"\n- **Cache dir:** `{_CACHE_DIR}`"
             f"\n- **Account sync (Gist):** {'✅ configured' if gist_ok else '⚠️ not configured'}"
         )
         if chrome_ok:
             st.markdown(
-                f"- **Chrome:** ✅ `{os.path.basename(chrome)}`"
-                f"\n- **Driver:** ✅ `{os.path.basename(driver)}`"
+                f"- **Chrome:** ✅ `{chrome}`"
+                f"\n- **Driver:** ✅ `{driver}`"
             )
         else:
             st.markdown(
@@ -562,10 +641,19 @@ def _render_diagnostics():
                 f"\n  - driver:  `{driver}`"
             )
         if cloud and not chrome_ok:
-            st.info(
-                "On Streamlit Cloud the browser/driver are installed via "
-                "`packages.txt` (chromium, chromium-driver)."
+            st.error(
+                "Chromium is not visible to the app. On Streamlit Cloud the "
+                "browser/driver come from `packages.txt` (`chromium`, "
+                "`chromium-driver`) — check the deploy log for apt errors."
             )
+        # Live launch test — the only way to know for sure.
+        if st.button("🧪 Test Chrome launch", key="diag_chrome_test"):
+            with st.spinner("Starting headless Chrome…"):
+                _ok, _msg = _chrome_launch_test()
+            if _ok:
+                st.success(_msg)
+            else:
+                st.error(_msg)
 
 
 with st.sidebar:
@@ -636,21 +724,16 @@ if page == "Home":
 
         # all_results[pc][supplier_key] = {wt: {size: price}}
         all_results = {pc: {} for pc in HOME_POSTCODES}
+        all_errors  = {}
         total_tasks = len(HOME_POSTCODES) * len(_SUPPLIER_KEYS)
         n_done_total = 0
 
         def _run_supplier(pc, key, run_fn, *args):
-            cell_q   = queue.Queue()
-            status_q = queue.Queue()
-            done     = threading.Event()
-            threading.Thread(target=run_fn, args=(*args, cell_q, status_q, done), daemon=True).start()
-            # Bound the wait so one unresponsive supplier cannot hang the app.
-            done.wait(timeout=_SEARCH_TIMEOUT)
-            out = {}
-            while not cell_q.empty():
-                wt, size, price = cell_q.get_nowait()
-                out.setdefault(wt, {})[size] = price
+            out, errs = _run_supplier(run_fn, *args)
             all_results[pc][key] = out
+            if errs:
+                all_errors.setdefault(pc, []).extend(
+                    [f"[{key.upper()}] {e}" for e in errs])
 
         prog = st.progress(0, text="Searching postcodes …")
 
@@ -660,7 +743,10 @@ if page == "Home":
         _chromium_heavy = {"bab", "sbf"}
         _light          = {"bpsb", "sbo"}
         _cpus           = cpu_count()
-        _run_heavy_together = _cpus >= 4
+        # On the cloud always keep the Chrome-heavy suppliers strictly
+        # sequential — the free tier has 1-2 vCPU / 1 GB RAM and two Chrome
+        # instances at once reliably wedges (or OOM-kills) the container.
+        _run_heavy_together = (_cpus >= 4) and not is_cloud()
 
         for _pc_i, _pc in enumerate(HOME_POSTCODES):
             prog.progress(n_done_total / total_tasks,
@@ -717,6 +803,15 @@ if page == "Home":
         prog.progress(1.0, text="All done!")
 
         st.success(f"✅ Done — Postcodes {', '.join(HOME_POSTCODES)}  |  {dod} → {pud}")
+
+        if all_errors:
+            with st.expander(f"⚠️ Search diagnostics ({sum(len(v) for v in all_errors.values())} issue(s))",
+                             expanded=True):
+                for _pc, _msgs in all_errors.items():
+                    st.markdown(f"**Postcode {_pc}**")
+                    for _m in list(dict.fromkeys(_msgs))[:8]:
+                        st.text(_m)
+                st.caption("Full details are in the Streamlit logs.")
 
         pc_tabs = st.tabs([f"📍 {pc}" for pc in HOME_POSTCODES])
         for pc, pc_tab in zip(HOME_POSTCODES, pc_tabs):
@@ -791,19 +886,13 @@ elif page == "Search by Postcode":
         _spbc_bpsb_pud = _parse_bpsb_date(spbc_pud)
 
         _spbc_results = {}  # supplier_key -> {wt: {size: price}}
+        _spbc_errors  = {}  # supplier_key -> [messages]
 
         def _spbc_run_supplier(key, run_fn, *args):
-            cell_q   = queue.Queue()
-            status_q = queue.Queue()
-            done     = threading.Event()
-            threading.Thread(target=run_fn, args=(*args, cell_q, status_q, done), daemon=True).start()
-            # Bound the wait so one unresponsive supplier cannot hang the app.
-            done.wait(timeout=_SEARCH_TIMEOUT)
-            out = {}
-            while not cell_q.empty():
-                wt, size, price = cell_q.get_nowait()
-                out.setdefault(wt, {})[size] = price
+            out, errs = _run_supplier(run_fn, *args)
             _spbc_results[key] = out
+            if errs:
+                _spbc_errors[key] = errs
 
         prog = st.progress(0, text=f"Searching postcode {spbc_postcode} …")
 
@@ -829,11 +918,13 @@ elif page == "Search by Postcode":
             ("sbo",  SBO.run_search,      (spbc_postcode, spbc_dod, spbc_pud)),
         )
 
-        if cpu_count() >= 4:
+        if (cpu_count() >= 4) and not is_cloud():
             # Enough cores → all four suppliers at once.
             _spbc_wait([_spbc_launch(k, f, *a) for k, f, a in _spbc_specs])
         else:
-            # Low core count → HTTP suppliers together, Selenium ones one by one.
+            # Low core count / cloud → HTTP suppliers together, Selenium ones
+            # strictly one at a time (a second Chrome instance wedges the
+            # 1 GB free-tier container).
             _light = [s for s in _spbc_specs if s[0] in ("bpsb", "sbo")]
             _heavy = [s for s in _spbc_specs if s[0] in ("bab", "sbf")]
             _spbc_wait([_spbc_launch(k, f, *a) for k, f, a in _light])
@@ -843,6 +934,7 @@ elif page == "Search by Postcode":
         prog.progress(1.0, text="All done!")
 
         st.session_state["spbc_last_results"] = _spbc_results
+        st.session_state["spbc_last_errors"]  = _spbc_errors
         st.session_state["spbc_last_pc"]  = spbc_postcode
         st.session_state["spbc_last_dod"] = spbc_dod
         st.session_state["spbc_last_pud"] = spbc_pud
@@ -886,6 +978,17 @@ elif page == "Search by Postcode":
         else:
             st.warning("No data returned from SkipBinsOnline.")
 
+        # ── Surface scraper failures instead of a silent wall of "N/A" ──
+        _spbc_errs = st.session_state.get("spbc_last_errors", {})
+        if _spbc_errs:
+            _all = []
+            for _k, _msgs in _spbc_errs.items():
+                _all.extend([f"[{_k.upper()}] {m}" for m in _msgs])
+            with st.expander(f"⚠️ Search diagnostics ({len(_all)} issue(s))", expanded=True):
+                for _m in list(dict.fromkeys(_all))[:12]:
+                    st.text(_m)
+                st.caption("Full details are in the Streamlit logs (search for '[Bookabin]').")
+
 # ===========================================================================
 # PAGE: BookABin
 # ===========================================================================
@@ -920,20 +1023,11 @@ elif page == "BookABin":
                 st.error("Please fill in all fields.")
                 st.stop()
 
-            def _run_bab(run_fn, *args):
-                cell_q   = queue.Queue()
-                status_q = queue.Queue()
-                done     = threading.Event()
-                threading.Thread(target=run_fn, args=(*args, cell_q, status_q, done), daemon=True).start()
-                done.wait(timeout=_SEARCH_TIMEOUT)
-                out = {}
-                while not cell_q.empty():
-                    wt, size, price = cell_q.get_nowait()
-                    out.setdefault(wt, {})[size] = price
-                return out
-
             with st.spinner("🔍 Fetching prices from BookABin… (this may take a minute)"):
-                _fetched = _run_bab(Bookabin.run_search, bab_postcode, bab_dod, bab_pud)
+                _fetched, _errs = _run_supplier(
+                    Bookabin.run_search, bab_postcode, bab_dod, bab_pud)
+
+            _show_supplier_errors(_errs, "BookABin")
 
             if not _fetched:
                 st.warning("No data returned from BookABin. Check the postcode and dates, then try again.")
@@ -1229,20 +1323,11 @@ elif page == "BestPriceSkipBins":
             bpsb_dod = _parse_bpsb_date(bpsb_dod_raw)
             bpsb_pud = _parse_bpsb_date(bpsb_pud_raw)
 
-            def _run_bpsb(run_fn, *args):
-                cell_q   = queue.Queue()
-                status_q = queue.Queue()
-                done     = threading.Event()
-                threading.Thread(target=run_fn, args=(*args, cell_q, status_q, done), daemon=True).start()
-                done.wait(timeout=_SEARCH_TIMEOUT)
-                out = {}
-                while not cell_q.empty():
-                    wt, size, price = cell_q.get_nowait()
-                    out.setdefault(wt, {})[size] = price
-                return out
-
             with st.spinner("🔍 Fetching prices from BestPriceSkipBins… (this may take a minute)"):
-                _fetched = _run_bpsb(BPSB.run_search, bpsb_postcode, bpsb_dod, bpsb_pud)
+                _fetched, _errs = _run_supplier(
+                    BPSB.run_search, bpsb_postcode, bpsb_dod, bpsb_pud)
+
+            _show_supplier_errors(_errs, "BestPriceSkipBins")
 
             if not _fetched:
                 st.warning("No data returned from BestPriceSkipBins. Check the postcode and dates, then try again.")
@@ -1653,20 +1738,11 @@ elif page == "SkipBinFinder":
                 st.error("Please fill in all fields.")
                 st.stop()
 
-            def _run_sbf(run_fn, *args):
-                cell_q   = queue.Queue()
-                status_q = queue.Queue()
-                done     = threading.Event()
-                threading.Thread(target=run_fn, args=(*args, cell_q, status_q, done), daemon=True).start()
-                done.wait(timeout=_SEARCH_TIMEOUT)
-                out = {}
-                while not cell_q.empty():
-                    wt, size, price = cell_q.get_nowait()
-                    out.setdefault(wt, {})[size] = price
-                return out
-
             with st.spinner("🔍 Fetching prices from SkipBinFinder… (this may take a few minutes)"):
-                _fetched = _run_sbf(SBF.run_search, sbf_postcode, sbf_dod, sbf_pud)
+                _fetched, _errs = _run_supplier(
+                    SBF.run_search, sbf_postcode, sbf_dod, sbf_pud)
+
+            _show_supplier_errors(_errs, "SkipBinFinder")
 
             if not _fetched:
                 st.warning("No data returned from SkipBinFinder. Check the postcode and dates, then try again.")
@@ -2270,20 +2346,11 @@ elif page == "SkipBinsOnline":
                 st.error("Please fill in all fields.")
                 st.stop()
 
-            def _run_sbo(run_fn, *args):
-                cell_q   = queue.Queue()
-                status_q = queue.Queue()
-                done     = threading.Event()
-                threading.Thread(target=run_fn, args=(*args, cell_q, status_q, done), daemon=True).start()
-                done.wait(timeout=_SEARCH_TIMEOUT)
-                out = {}
-                while not cell_q.empty():
-                    wt, size, price = cell_q.get_nowait()
-                    out.setdefault(wt, {})[size] = price
-                return out
-
             with st.spinner("🔍 Fetching prices from SkipBinsOnline… (this may take a minute)"):
-                _fetched = _run_sbo(SBO.run_search, sbo_postcode, sbo_dod, sbo_pud)
+                _fetched, _errs = _run_supplier(
+                    SBO.run_search, sbo_postcode, sbo_dod, sbo_pud)
+
+            _show_supplier_errors(_errs, "SkipBinsOnline")
 
             if not _fetched:
                 st.warning("No data returned from SkipBinsOnline. Check the postcode and dates, then try again.")

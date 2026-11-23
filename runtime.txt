@@ -1,1 +1,8 @@
+# NOTE: Streamlit Community Cloud IGNORES runtime.txt — the Python version
+# must be selected in the app's "Advanced settings" on the dashboard
+# (https://share.streamlit.io/ → app → Settings → Python version).
+#
+# The cloud currently runs Python 3.14.x with this repo, and the code is
+# verified to work on 3.14 as well as 3.11/3.13. This file is kept so that
+# self-hosted / Docker / Heroku style deployments still pin 3.11.
 python-3.11
